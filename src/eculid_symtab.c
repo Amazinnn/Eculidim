@@ -28,25 +28,39 @@ void ec_symtab_free(ECSymTab *tab) {
 
 int ec_symtab_define(ECSymTab *tab, const char *name, const char *args,
                      const char *expr_latex) {
-    (void)args; (void)expr_latex;
     if (tab->count >= 1024) return 0;
     ECSymEntry *e = ec_malloc(sizeof(ECSymEntry));
     e->type = EC_SYM_FUNC;
     e->name = ec_strdup(name);
-    e->arg_names = NULL; e->n_args = 0;
-    e->expr = NULL;
+    e->expr = expr_latex ? ec_parse(expr_latex) : NULL;
+    e->n_args = 0; e->arg_names = NULL;
+    if (args) {
+        e->arg_names = ec_malloc(sizeof(char*));
+        e->arg_names[0] = ec_strdup(args);
+        e->n_args = 1;
+    }
     tab->entries[tab->count++] = e;
     return 1;
 }
 
-int ec_symtab_set_var(ECSymTab *tab, const char *name, double value) {
-    (void)value;
+int ec_symtab_set_var(ECSymTab *tab, const char *name, Expr *value) {
+    if (!tab || !name) return 0;
+    /* remove existing entry if any */
+    for (int i = 0; i < tab->count; i++) {
+        if (strcmp(tab->entries[i]->name, name) == 0) {
+            ECSymEntry *old = tab->entries[i];
+            ec_free(old->name);
+            if (old->expr) ec_free_expr(old->expr);
+            old->expr = ec_copy(value);
+            return 1;
+        }
+    }
     if (tab->count >= 1024) return 0;
     ECSymEntry *e = ec_malloc(sizeof(ECSymEntry));
     e->type = EC_SYM_VAR;
     e->name = ec_strdup(name);
     e->arg_names = NULL; e->n_args = 0;
-    e->expr = NULL;
+    e->expr = ec_copy(value);
     tab->entries[tab->count++] = e;
     return 1;
 }

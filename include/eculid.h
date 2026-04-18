@@ -22,6 +22,7 @@
 #include "eculid_session.h"
 #include "eculid_symtab.h"
 #include "eculid_util.h"
+#include "eculid_json.h"
 
 /*============================================================
  * 主入口 API

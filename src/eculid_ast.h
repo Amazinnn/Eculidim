@@ -139,6 +139,7 @@ Expr* ec_binary(ECNodeType t, Expr *left, Expr *right);
 Expr* ec_ternary(ECNodeType t, Expr *cond, Expr *left, Expr *right);
 Expr* ec_const(ECNodeType type);
 Expr* ec_deriv(Expr *e, char var, int order);
+Expr* ec_diff_with_latex(Expr *e, char var);
 Expr* ec_intg(Expr *e, char var);
 Expr* ec_defintg(Expr *e, char var, Expr *a, Expr *b);
 Expr* ec_limit_node(Expr *e, char var, Expr *point);

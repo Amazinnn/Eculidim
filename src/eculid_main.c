@@ -165,12 +165,22 @@ static void handle_normal(EculidSession *s, const char *input, REPLMode mode) {
         output_result(NULL, "EC001", ec_parse_error_msg());
         ec_free_expr(e); return;
     }
-    Expr *simple = ec_simplify(e);
+    /* Substitute defined variables from symtab */
+    Expr *subbed = ec_copy(e);
+    for (int i = 0; i < s->symtab->count; i++) {
+        ECSymEntry *entry = s->symtab->entries[i];
+        if (entry->type == EC_SYM_VAR && entry->expr) {
+            Expr *r = ec_substitute(subbed, entry->name, entry->expr);
+            ec_free_expr(subbed);
+            subbed = r;
+        }
+    }
+    Expr *simple = ec_simplify(subbed);
     char *latex = ec_to_latex(simple);
     ec_session_set_ans(s, simple);
     ec_session_add(s, input, latex, "eval");
     output_result(latex, NULL, NULL);
-    ec_free_expr(simple); ec_free_expr(e); ec_free(latex);
+    ec_free_expr(simple); ec_free_expr(subbed); ec_free_expr(e); ec_free(latex);
 }
 
 static void handle_diff(EculidSession *s, const char *input) {
@@ -181,10 +191,11 @@ static void handle_diff(EculidSession *s, const char *input) {
         output_result(NULL, "EC001", ec_parse_error_msg());
         ec_free_expr(e); return;
     }
-    Expr *d = ec_diff(e, 'x');
-    char *latex = ec_to_latex(d);
+    Expr *wrapped = ec_diff_with_latex(e, 'x');
+    char *latex = ec_to_latex(wrapped);
     output_result(latex, NULL, NULL);
-    ec_free_expr(e); ec_free_expr(d); ec_free(latex);
+    ec_free_expr(wrapped->arg); ec_free(wrapped);
+    ec_free_expr(e); ec_free(latex);
 }
 
 static void handle_integrate(EculidSession *s, const char *input) {
@@ -303,24 +314,29 @@ static void repl_loop(void) {
     EculidSession *s = ec_session_new();
     ec_plugin_init();
 
+    if (ec_session_load(ec_session_symtab(s), NULL)) {
+        printf("Previous session loaded.\n");
+    }
+
     printf("Eculidim v1.0 — 输入 \\help 查看帮助\n");
 
     while (1) {
         printf("%s", mode_prompt(mode));
         if (!fgets(line, sizeof(line), stdin)) break;
-        line[strcspn(line, "\n")] = 0;
+        /* strip \r\n\0 from end */
+        line[strcspn(line, "\r\n")] = 0;
         if (!*line) continue;
 
-        if (strcmp(line, "\\quit") == 0 || strcmp(line, "\\exit") == 0) break;
-        if (strcmp(line, "\\help") == 0) { print_help(); continue; }
-        if (strcmp(line, "\\diff") == 0) { mode = MODE_DIFF; continue; }
-        if (strcmp(line, "\\int") == 0) { mode = MODE_INTEGRATE; continue; }
-        if (strcmp(line, "\\solve") == 0) { mode = MODE_SOLVE; continue; }
-        if (strcmp(line, "\\series") == 0) { mode = MODE_SERIES; continue; }
-        if (strcmp(line, "\\sum") == 0) { mode = MODE_SUM; continue; }
-        if (strcmp(line, "\\limit") == 0) { mode = MODE_LIMIT; continue; }
-        if (strcmp(line, "\\num") == 0) { mode = MODE_NUMERIC; continue; }
-        if (strcmp(line, "\\normal") == 0 || strcmp(line, "\\eval") == 0) { mode = MODE_NORMAL; continue; }
+        if (is_cmd(line, "\\quit") || is_cmd(line, "\\exit") || strcmp(line, "exit") == 0) break;
+        if (is_cmd(line, "\\help")) { print_help(); continue; }
+        if (is_cmd(line, "\\diff")) { mode = MODE_DIFF; continue; }
+        if (is_cmd(line, "\\int")) { mode = MODE_INTEGRATE; continue; }
+        if (is_cmd(line, "\\solve")) { mode = MODE_SOLVE; continue; }
+        if (is_cmd(line, "\\series")) { mode = MODE_SERIES; continue; }
+        if (is_cmd(line, "\\sum")) { mode = MODE_SUM; continue; }
+        if (is_cmd(line, "\\limit")) { mode = MODE_LIMIT; continue; }
+        if (is_cmd(line, "\\num")) { mode = MODE_NUMERIC; continue; }
+        if (is_cmd(line, "\\normal") || is_cmd(line, "\\eval")) { mode = MODE_NORMAL; continue; }
 
         /* JSON / Text mode toggle */
         if (is_cmd(line, "\\json")) { g_json_mode = 1; continue; }
@@ -333,7 +349,39 @@ static void repl_loop(void) {
             continue;
         }
         if (is_cmd(line, "\\def ")) {
-            /* TODO: handle define */
+            const char *p = line + 5;
+            while (*p == ' ') p++;
+            const char *eq = strchr(p, '=');
+            if (!eq) {
+                output_result(NULL, "EC007", "def syntax: \\def name = expr or \\def f(var) = expr");
+                continue;
+            }
+            char name[128];
+            int name_len = (int)(eq - p);
+            if (name_len >= (int)sizeof(name)) name_len = (int)sizeof(name) - 1;
+            strncpy(name, p, name_len);
+            name[name_len] = 0;
+            while (name_len > 0 && name[name_len-1] == ' ') name[--name_len] = 0;
+            const char *expr_str = eq + 1;
+            while (*expr_str == ' ') expr_str++;
+            char func_name[64], var_name[64];
+            if (sscanf(name, "%63[^(](%63[^)])", func_name, var_name) == 2) {
+                ec_symtab_define(s->symtab, func_name, var_name, expr_str);
+                char buf[256];
+                snprintf(buf, sizeof(buf), "defined %s(%s) = %s", func_name, var_name, expr_str);
+                output_result(buf, NULL, NULL);
+            } else {
+                Expr *val = ec_parse(expr_str);
+                if (ec_parse_error()) {
+                    output_result(NULL, "EC001", ec_parse_error_msg());
+                    ec_free_expr(val);
+                } else {
+                    ec_symtab_set_var(s->symtab, name, val);
+                    char buf[256];
+                    snprintf(buf, sizeof(buf), "%s = %s", name, expr_str);
+                    output_result(buf, NULL, NULL);
+                }
+            }
             continue;
         }
         if (is_cmd(line, "\\ans")) {
@@ -367,8 +415,21 @@ static void repl_loop(void) {
  * 主入口
  *============================================================*/
 int ec_cli(int argc, char *argv[]) {
-    if (argc > 1 && strcmp(argv[1], "--json") == 0) {
-        g_json_mode = 1;
+    if (argc > 1) {
+        if (strcmp(argv[1], "--json") == 0) {
+            g_json_mode = 1;
+            if (argc > 2) {
+                EculidSession *s = ec_session_new();
+                handle_normal(s, argv[2], MODE_NORMAL);
+                ec_session_free(s);
+                return 0;
+            }
+        } else {
+            EculidSession *s = ec_session_new();
+            handle_normal(s, argv[1], MODE_NORMAL);
+            ec_session_free(s);
+            return 0;
+        }
     }
     repl_loop();
     return 0;

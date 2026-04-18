@@ -22,7 +22,7 @@ void    ec_symtab_init(ECSymTab *tab);
 void    ec_symtab_free(ECSymTab *tab);
 int     ec_symtab_define(ECSymTab *tab, const char *name, const char *args,
                          const char *expr_latex);
-int     ec_symtab_set_var(ECSymTab *tab, const char *name, double value);
+int     ec_symtab_set_var(ECSymTab *tab, const char *name, Expr *value);
 Expr*   ec_symtab_lookup(const ECSymTab *tab, const char *name);
 double  ec_symtab_lookup_var(const ECSymTab *tab, const char *name);
 void    ec_symtab_list(const ECSymTab *tab, void (*print_fn)(const char*));

@@ -220,7 +220,30 @@ int ec_is_complex(const Expr *e) {
  * 代入
  *============================================================*/
 Expr* ec_substitute(const Expr *e, const char *var, const Expr *value) {
-    (void)e; (void)var; (void)value; return ec_copy(e); /* TODO */
+    if (!e) return NULL;
+    switch (e->type) {
+        case EC_NUM: return ec_copy(e);
+        case EC_VAR:
+            if (e->var_str) {
+                if (strcmp(e->var_str, var) == 0) return ec_copy(value);
+            } else {
+                if (e->var_name == var[0]) return ec_copy(value);
+            }
+            return ec_copy(e);
+        default: break;
+    }
+    Expr *L = e->left  ? ec_substitute(e->left, var, value)  : NULL;
+    Expr *R = e->right ? ec_substitute(e->right, var, value) : NULL;
+    Expr *A = e->arg   ? ec_substitute(e->arg, var, value)   : NULL;
+    Expr *C = e->cond  ? ec_substitute(e->cond, var, value)  : NULL;
+    Expr *result = ec_malloc(sizeof(Expr));
+    *result = *e;
+    result->left = L; result->right = R; result->arg = A; result->cond = C;
+    if (L) result->left  = L;
+    if (R) result->right = R;
+    if (A) result->arg   = A;
+    if (C) result->cond  = C;
+    return result;
 }
 
 Expr* ec_substitute_val(const Expr *e, const char *var, double value) {

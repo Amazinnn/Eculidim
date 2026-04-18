@@ -7,8 +7,10 @@
 typedef struct {
     EculidHistoryEntry entries[EC_MAX_HISTORY];
     int count;
+    int saved_count;        /* saved-to-file record count (max 5) */
     Expr *ans;
     int steps_enabled;
+    int json_mode;          /* JSON output mode */
     ECSymTab *symtab;
 } EculidSession;
 
@@ -23,5 +25,8 @@ void           ec_session_add(EculidSession *s, const char *input,
 void           ec_session_history(const EculidSession *s,
                                    void (*print_fn)(const char*));
 ECSymTab*      ec_session_symtab(EculidSession *s);
+
+int            ec_session_save(const EculidSession *s);
+int            ec_session_load(ECSymTab *tab, const char *filepath);
 
 #endif /* ECULID_SESSION_H */

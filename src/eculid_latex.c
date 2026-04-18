@@ -135,18 +135,61 @@ static void latex_rec(const Expr *e, char *buf, size_t cap, size_t *pos) {
             *pos += snprintf(buf + *pos, cap - *pos, "}");
             break;
         case EC_SIN: case EC_COS: case EC_TAN: case EC_EXP: case EC_LN:
-        case EC_SINH: case EC_COSH: case EC_TANH: case EC_ASIN: case EC_ACOS:
-        case EC_ATAN: case EC_ABS: case EC_FLOOR: case EC_CEIL: case EC_SIGN: {
+        case EC_SINH: case EC_COSH: case EC_TANH:
+        case EC_ABS: case EC_FLOOR: case EC_CEIL: case EC_SIGN:
+        case EC_COT: case EC_SEC: case EC_CSC:
+        case EC_ASIN: case EC_ACOS: case EC_ATAN:
+        case EC_ACOT: case EC_ASEC: case EC_ACSC:
+        case EC_LOG: case EC_LOG10: case EC_LOG2:
+        case EC_COTH: case EC_SECH: case EC_CSCH:
+        case EC_ASINH: case EC_ACOSH: case EC_ATANH:
+        case EC_EXP2: case EC_EXPM1: case EC_LN1P:
+        case EC_ROUND: case EC_TRUNC: case EC_FDIM: case EC_MOD:
+        case EC_LT: case EC_LE: case EC_GT: case EC_GE:
+        case EC_EQ: case EC_NE: case EC_LAND: case EC_LOR: case EC_LNOT:
+        case EC_REM: case EC_FACTORIAL: {
             static const char *names[] = {
-                [EC_SIN]="sin",[EC_COS]="cos",[EC_TAN]="tan",[EC_EXP]="exp",
-                [EC_LN]="ln",[EC_SINH]="sinh",[EC_COSH]="cosh",[EC_TANH]="tanh",
+                [EC_SIN]="sin",[EC_COS]="cos",[EC_TAN]="tan",
+                [EC_COT]="cot",[EC_SEC]="sec",[EC_CSC]="csc",
+                [EC_EXP]="exp",[EC_EXP2]="exp2",[EC_EXPM1]="expm1",
+                [EC_LN]="ln",[EC_LN1P]="ln1p",
+                [EC_LOG]="log",[EC_LOG10]="log_{10}",[EC_LOG2]="log_2",
+                [EC_SINH]="sinh",[EC_COSH]="cosh",[EC_TANH]="tanh",
+                [EC_COTH]="coth",[EC_SECH]="sech",[EC_CSCH]="csch",
                 [EC_ASIN]="arcsin",[EC_ACOS]="arccos",[EC_ATAN]="arctan",
-                [EC_ABS]="abs",[EC_FLOOR]="floor",[EC_CEIL]="ceil",[EC_SIGN]="sign"
+                [EC_ACOT]="arccot",[EC_ASEC]="arcsec",[EC_ACSC]="arccsc",
+                [EC_ASINH]="arsinh",[EC_ACOSH]="arcosh",[EC_ATANH]="artanh",
+                [EC_ABS]="abs",[EC_SIGN]="sign",
+                [EC_FLOOR]="floor",[EC_CEIL]="ceil",
+                [EC_ROUND]="round",[EC_TRUNC]="trunc",
+                [EC_LT]="<",[EC_LE]="<=", [EC_GT]=">", [EC_GE]=">=",
+                [EC_EQ]="=",  [EC_NE]="!=",
+                [EC_LAND]="\\land",[EC_LOR]="\\lor",[EC_LNOT]="\\lnot",
+                [EC_MOD]="\\bmod",[EC_REM]="\\rem",[EC_FDIM]="\\fdim",
+                [EC_FACTORIAL]="!",
             };
-            const char *n = names[e->type] ? names[e->type] : "?";
-            *pos += snprintf(buf + *pos, cap - *pos, "\\%s(", n);
-            latex_rec(e->arg, buf, cap, pos);
-            *pos += snprintf(buf + *pos, cap - *pos, ")");
+            const char *n = names[e->type] ? names[e->type] : "\\text{op}";
+            if (e->type == EC_LT || e->type == EC_LE || e->type == EC_GT ||
+                e->type == EC_GE || e->type == EC_EQ || e->type == EC_NE ||
+                e->type == EC_LAND || e->type == EC_LOR || e->type == EC_MOD ||
+                e->type == EC_REM || e->type == EC_FDIM) {
+                *pos += snprintf(buf + *pos, cap - *pos, "(");
+                latex_rec(e->left, buf, cap, pos);
+                *pos += snprintf(buf + *pos, cap - *pos, ")%s(", n);
+                latex_rec(e->right, buf, cap, pos);
+                *pos += snprintf(buf + *pos, cap - *pos, ")");
+            } else if (e->type == EC_LNOT) {
+                *pos += snprintf(buf + *pos, cap - *pos, "%s(", n);
+                latex_rec(e->arg, buf, cap, pos);
+                *pos += snprintf(buf + *pos, cap - *pos, ")");
+            } else if (e->type == EC_FACTORIAL) {
+                latex_rec(e->arg, buf, cap, pos);
+                *pos += snprintf(buf + *pos, cap - *pos, "!");
+            } else {
+                *pos += snprintf(buf + *pos, cap - *pos, "\\%s(", n);
+                latex_rec(e->arg, buf, cap, pos);
+                *pos += snprintf(buf + *pos, cap - *pos, ")");
+            }
             break;
         }
         case EC_PI: *pos += snprintf(buf + *pos, cap - *pos, "\\pi"); break;
@@ -205,8 +248,105 @@ char* ec_to_latex(const Expr *e) {
 }
 
 char* ec_to_latex_pretty(const Expr *e) { return ec_to_latex(e); }
-char* ec_to_latex_inline(const Expr *e) { return ec_to_latex(e); }
-char* ec_to_latex_tree(const Expr *e) { return ec_to_latex(e); }
-char* ec_to_latex_html(const Expr *e) { return ec_to_latex(e); }
+
+char* ec_to_latex_inline(const Expr *e) {
+    char *s = ec_to_latex(e);
+    if (!s) return ec_strdup("\\( \\)");
+    size_t len = strlen(s);
+    char *r = ec_malloc(len + 7);
+    snprintf(r, len + 7, "\\(%s\\)", s);
+    ec_free(s);
+    return r;
+}
+
+/* ASCII tree representation of AST (for debugging) */
+static void tree_node_name(char *buf, size_t cap, const Expr *e) {
+    switch (e->type) {
+        case EC_NUM:  snprintf(buf, cap, "NUM:%.10g", e->num_val); break;
+        case EC_VAR:  snprintf(buf, cap, "VAR:%s", e->var_str ? e->var_str : "x"); break;
+        case EC_PI:   snprintf(buf, cap, "PI"); break;
+        case EC_E:    snprintf(buf, cap, "E"); break;
+        case EC_I:    snprintf(buf, cap, "I"); break;
+        case EC_INF:  snprintf(buf, cap, "INF"); break;
+        case EC_ADD:  snprintf(buf, cap, "ADD"); break;
+        case EC_SUB:  snprintf(buf, cap, "SUB"); break;
+        case EC_MUL:  snprintf(buf, cap, "MUL"); break;
+        case EC_DIV:  snprintf(buf, cap, "DIV"); break;
+        case EC_POW:  snprintf(buf, cap, "POW"); break;
+        case EC_NEG:  snprintf(buf, cap, "NEG"); break;
+        case EC_MOD:  snprintf(buf, cap, "MOD"); break;
+        case EC_SIN:  snprintf(buf, cap, "SIN"); break;
+        case EC_COS:  snprintf(buf, cap, "COS"); break;
+        case EC_TAN:  snprintf(buf, cap, "TAN"); break;
+        case EC_SQRT: snprintf(buf, cap, "SQRT"); break;
+        case EC_EXP:  snprintf(buf, cap, "EXP"); break;
+        case EC_LN:   snprintf(buf, cap, "LN"); break;
+        case EC_INT:  snprintf(buf, cap, "INT"); break;
+        case EC_DERIV:snprintf(buf, cap, "DERIV"); break;
+        case EC_LIMIT:snprintf(buf, cap, "LIMIT"); break;
+        case EC_SUM:  snprintf(buf, cap, "SUM"); break;
+        case EC_SERIES:snprintf(buf, cap, "SERIES"); break;
+        default:      snprintf(buf, cap, "OP:%d", e->type); break;
+    }
+}
+
+static void tree_rec(const Expr *e, char *buf, size_t cap,
+                     size_t *pos, const char *prefix, int is_last) {
+    if (!e) return;
+    char name[32];
+    tree_node_name(name, sizeof(name), e);
+    int n = snprintf(buf + *pos, cap - *pos, "%s[%s]\n", prefix, name);
+    if (n < 0 || (size_t)n >= cap - *pos) return;
+    *pos += n;
+
+    /* build child prefix */
+    char child_pre[256];
+    snprintf(child_pre, sizeof(child_pre), "%s%s",
+             prefix, is_last ? "    " : "|   ");
+
+    if (e->left) {
+        n = snprintf(buf + *pos, cap - *pos, "%s|-- L: ", prefix);
+        if (n < 0 || (size_t)n >= cap - *pos) return;
+        *pos += n;
+        tree_rec(e->left, buf, cap, pos, child_pre, !e->right && !e->arg);
+    }
+    if (e->right) {
+        n = snprintf(buf + *pos, cap - *pos, "%s|-- R: ", prefix);
+        if (n < 0 || (size_t)n >= cap - *pos) return;
+        *pos += n;
+        tree_rec(e->right, buf, cap, pos, child_pre, !e->arg);
+    }
+    if (e->arg) {
+        n = snprintf(buf + *pos, cap - *pos, "%s\\-- A: ", prefix);
+        if (n < 0 || (size_t)n >= cap - *pos) return;
+        *pos += n;
+        tree_rec(e->arg, buf, cap, pos, child_pre, 1);
+    }
+    if (e->cond) {
+        n = snprintf(buf + *pos, cap - *pos, "%s\\-- C: ", prefix);
+        if (n < 0 || (size_t)n >= cap - *pos) return;
+        *pos += n;
+        tree_rec(e->cond, buf, cap, pos, child_pre, 1);
+    }
+}
+
+char* ec_to_latex_tree(const Expr *e) {
+    char *buf = ec_malloc(8192);
+    buf[0] = '\0';
+    size_t pos = 0;
+    if (!e) { snprintf(buf, 256, "(null)\n"); return buf; }
+    tree_rec(e, buf, 8192, &pos, "", 1);
+    return buf;
+}
+
+char* ec_to_latex_html(const Expr *e) {
+    char *s = ec_to_latex(e);
+    if (!s) return ec_strdup("\\(<empty>\\)");
+    size_t len = strlen(s);
+    char *r = ec_malloc(len + 7);
+    snprintf(r, len + 7, "\\(%s\\)", s);
+    ec_free(s);
+    return r;
+}
 void ec_latex_free(char *s) { ec_free(s); }
 char* ec_latex_normalize(const char *latex) { return ec_strdup(latex); }
