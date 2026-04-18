@@ -1,4 +1,5 @@
 #include "eculid.h"
+#include <string.h>
 
 static Parser g_parser;
 
@@ -140,7 +141,7 @@ Expr* ec_parse(const char *latex) {
     Expr *e = parser_parse(&g_parser);
     return e;
 }
-void ec_parse_free(Expr *e) { ec_free(e); }
+void ec_parse_free(Expr *e) { ec_free_expr(e); }
 int ec_parse_error(void) { return parser_error(&g_parser); }
 const char* ec_parse_error_msg(void) { return g_parser.err; }
 int ec_parse_error_pos(void) { return g_parser.err_pos; }

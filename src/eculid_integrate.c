@@ -26,11 +26,11 @@ static Expr* integ_rec(const Expr *e, char var) {
         }
         case EC_SIN:
             if (e->arg->type == EC_VAR && e->arg->var_name == var)
-                return ec_unary(EC_NEG, ec_cos(ec_varc(var)));
+                return ec_unary(EC_NEG, ec_unary(EC_COS, ec_varc(var)));
             break;
         case EC_COS:
             if (e->arg->type == EC_VAR && e->arg->var_name == var)
-                return ec_sin(ec_varc(var));
+                return ec_unary(EC_SIN, ec_varc(var));
             break;
         case EC_EXP:
             if (e->arg->type == EC_VAR && e->arg->var_name == var)

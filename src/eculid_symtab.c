@@ -20,7 +20,7 @@ void ec_symtab_free(ECSymTab *tab) {
         ec_free(e->name);
         for (int j = 0; j < e->n_args; j++) ec_free(e->arg_names[j]);
         ec_free(e->arg_names);
-        if (e->expr) ec_free(e->expr);
+        if (e->expr) ec_free_expr(e->expr);
         ec_free(e);
     }
     tab->count = 0;
@@ -82,7 +82,7 @@ int ec_symtab_remove(ECSymTab *tab, const char *name) {
             ec_free(e->name);
             for (int j = 0; j < e->n_args; j++) ec_free(e->arg_names[j]);
             ec_free(e->arg_names);
-            if (e->expr) ec_free(e->expr);
+            if (e->expr) ec_free_expr(e->expr);
             ec_free(e);
             for (int j = i; j < tab->count - 1; j++) tab->entries[j] = tab->entries[j+1];
             tab->count--;

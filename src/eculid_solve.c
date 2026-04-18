@@ -15,7 +15,7 @@ Expr* ec_solve_linear(Expr *eq, char var) {
 Expr* ec_solve_quadratic(double a, double b, double c) {
     double d = b * b - 4 * a * c;
     if (d < 0) return NULL; /* 无实根 */
-    if (d == 0) return ec_binary(EC_EQ, ec_varc(var), ec_num(-b / (2 * a)));
+    if (d == 0) return ec_binary(EC_EQ, ec_varc('x'), ec_num(-b / (2 * a)));
     /* 返回两根 */
     Expr *r1 = ec_binary(EC_EQ, ec_varc('x'), ec_num((-b + sqrt(d)) / (2 * a)));
     Expr *r2 = ec_binary(EC_EQ, ec_varc('x'), ec_num((-b - sqrt(d)) / (2 * a)));
@@ -52,7 +52,7 @@ ECInterval* ec_solve_inequality(Expr *ineq, const char *var, int *count) {
 }
 
 void ec_roots_free(EculidRoots *r) {
-    for (int i = 0; i < r->count; i++) ec_free(r->roots[i]);
+    for (int i = 0; i < r->count; i++) ec_free_expr(r->roots[i]);
     if (r->roots) ec_free(r->roots);
     if (r->method) ec_free(r->method);
     r->roots = NULL; r->count = 0;

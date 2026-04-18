@@ -68,7 +68,7 @@ Expr* ec_diff_n(Expr *e, char var, int n) {
     Expr *r = ec_copy(e);
     for (int i = 0; i < n; i++) {
         Expr *next = diff_rec(r, var);
-        ec_free(r); r = next;
+        ec_free_expr(r); r = next;
     }
     return r;
 }

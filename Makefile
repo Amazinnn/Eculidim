@@ -1,6 +1,7 @@
 CC      = "C:\Program Files (x86)\Dev-Cpp\MinGW32\bin\gcc"
 CFLAGS  = -std=c99 -Wall -Wextra -O2 -I./include -Isrc
 SRCS    = $(wildcard src/*.c)
+SRCS    := $(filter-out src/test.c, $(SRCS))
 OBJS    = $(SRCS:.c=.o)
 OUT     = Eculidim
 
@@ -15,6 +16,6 @@ src/%.o: src/%.c include/eculid.h
 clean:
 	rm -f $(OUT) src/*.o
 
-test: $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) src/test.c -o test -lm
+test: all
+	$(CC) $(CFLAGS) src/test.c $(OBJS) -o test -lm
 	./test

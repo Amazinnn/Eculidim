@@ -1,4 +1,5 @@
 #include "eculid.h"
+#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,81 +60,81 @@ static void handle_normal(EculidSession *s, const char *input, REPLMode mode) {
     printf("%s\n", latex);
     ec_session_set_ans(s, simple);
     ec_session_add(s, input, latex, "eval");
-    ec_free(simple); ec_free(e); ec_free(latex);
+    ec_free_expr(simple); ec_free_expr(e); ec_free(latex);
 }
 
 static void handle_diff(EculidSession *s, const char *input) {
     /* \diff x -> 对 x 求导，或 diff(expr, var) */
     (void)s; (void)input;
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     /* 默认对 x 求导 */
     Expr *d = ec_diff(e, 'x');
     char *latex = ec_to_latex(d);
     printf("%s\n", latex);
-    ec_free(e); ec_free(d); ec_free(latex);
+    ec_free_expr(e); ec_free_expr(d); ec_free(latex);
 }
 
 static void handle_integrate(EculidSession *s, const char *input) {
     (void)s;
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     Expr *F = ec_integrate(e, 'x');
     char *latex = ec_to_latex(F);
     printf("%s + C\n", latex);
-    ec_free(e); ec_free(F); ec_free(latex);
+    ec_free_expr(e); ec_free_expr(F); ec_free(latex);
 }
 
 static void handle_solve(EculidSession *s, const char *input) {
     (void)s; (void)input;
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     EculidRoots r = ec_solve(e, "x");
     printf("解: %d 个\n", r.count);
     for (int i = 0; i < r.count; i++) {
         char *l = ec_to_latex(r.roots[i]); printf("  %s\n", l); ec_free(l);
     }
-    ec_roots_free(&r); ec_free(e);
+    ec_roots_free(&r); ec_free_expr(e);
 }
 
 static void handle_series(EculidSession *s, const char *input) {
     (void)s; (void)input;
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     Expr *t = ec_maclaurin(e, "x", 5);
     char *l = ec_to_latex(t); printf("%s\n", l);
-    ec_free(e); ec_free(t); ec_free(l);
+    ec_free_expr(e); ec_free_expr(t); ec_free(l);
 }
 
 static void handle_sum(EculidSession *s, const char *input) {
     (void)s; (void)input;
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     Expr *result = ec_sum(ec_copy(e), "n", ec_num(1), ec_num(10));
     char *l = ec_to_latex(result); printf("%s\n", l);
-    ec_free(e); ec_free(result); ec_free(l);
+    ec_free_expr(e); ec_free_expr(result); ec_free(l);
 }
 
 static void handle_limit(EculidSession *s, const char *input) {
     (void)s; (void)input;
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     Expr *L = ec_limit(e, 'x', ec_num(0), EC_LIMIT_BOTH);
     char *l = L ? ec_to_latex(L) : ec_strdup("不存在");
     printf("极限 = %s\n", l);
-    ec_free(e); if (L) ec_free(L); ec_free(l);
+    ec_free_expr(e); if (L) ec_free_expr(L); ec_free(l);
 }
 
 static void handle_numeric(EculidSession *s, const char *input) {
     (void)s;
     /* 支持 {x=1,y=2} 形式的批量代入 */
     Expr *e = ec_parse(input);
-    if (ec_parse_error()) { printf("解析错误\n"); ec_free(e); return; }
+    if (ec_parse_error()) { printf("解析错误\n"); ec_free_expr(e); return; }
     ECValue v = ec_eval_sym(e);
     if (v.type == EC_VAL_REAL) printf("%.10g\n", v.real);
     else if (v.type == EC_VAL_COMPLEX) printf("%.10g + %.10gi\n", v.real, v.imag);
     else printf("无法数值化\n");
-    ec_free(e);
+    ec_free_expr(e);
 }
 
 static void repl_loop(void) {

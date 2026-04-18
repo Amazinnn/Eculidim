@@ -150,7 +150,8 @@ Expr* ec_series_node(Expr *e, const char *var, Expr *a, int order);
  * 复制 / 释放
  *============================================================*/
 Expr* ec_copy(const Expr *e);
-void  ec_free(Expr *e);
+void  ec_free(void *p);
+void  ec_free_expr(Expr *e);
 
 /*============================================================
  * 查询

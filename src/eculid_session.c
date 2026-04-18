@@ -18,7 +18,7 @@ void ec_session_free(EculidSession *s) {
         ec_free(s->entries[i].output);
         ec_free(s->entries[i].operation);
     }
-    if (s->ans) ec_free(s->ans);
+    if (s->ans) ec_free_expr(s->ans);
     ec_symtab_free(&g_default_symtab);
     ec_free(s);
 }
@@ -29,7 +29,7 @@ int ec_session_get_steps(const EculidSession *s) { return s->steps_enabled; }
 Expr* ec_session_get_ans(const EculidSession *s) { return s->ans; }
 
 void ec_session_set_ans(EculidSession *s, Expr *ans) {
-    if (s->ans) ec_free(s->ans);
+    if (s->ans) ec_free_expr(s->ans);
     s->ans = ec_copy(ans);
 }
 
@@ -75,7 +75,7 @@ EculidResult ec_evaluate(EculidSession *session, const char *input) {
     }
     Expr *e = ec_parse(input);
     if (ec_parse_error()) {
-        r.error = ec_strdup(ec_parse_error_msg()); ec_free(e); return r;
+        r.error = ec_strdup(ec_parse_error_msg()); ec_free_expr(e); return r;
     }
     Expr *simple = ec_simplify(e);
     r.result_ast = ec_copy(simple);
@@ -85,7 +85,7 @@ EculidResult ec_evaluate(EculidSession *session, const char *input) {
     if (session->steps_enabled) {
         /* TODO: 生成推导步骤 */
     }
-    ec_free(simple); ec_free(e);
+    ec_free_expr(simple); ec_free_expr(e);
     return r;
 }
 
@@ -93,7 +93,7 @@ void ec_result_free(EculidResult *r) {
     if (r->output) ec_free(r->output);
     if (r->steps) ec_free(r->steps);
     if (r->error) ec_free(r->error);
-    if (r->result_ast) ec_free(r->result_ast);
+    if (r->result_ast) ec_free_expr(r->result_ast);
     r->output = r->steps = r->error = NULL;
     r->result_ast = NULL;
 }

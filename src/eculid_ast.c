@@ -154,12 +154,14 @@ static Expr* ec_copy_rec(const Expr *e) {
 
 Expr* ec_copy(const Expr *e) { return ec_copy_rec(e); }
 
-void ec_free(Expr *e) {
+void ec_free(void *p) { free(p); }
+
+void ec_free_expr(Expr *e) {
     if (!e) return;
-    if (e->var_str) ec_free(e->var_str);
-    ec_free(e->left); ec_free(e->right);
-    ec_free(e->arg); ec_free(e->cond);
-    ec_free(e);
+    if (e->var_str) free(e->var_str);
+    ec_free_expr(e->left); ec_free_expr(e->right);
+    ec_free_expr(e->arg); ec_free_expr(e->cond);
+    free(e);
 }
 
 /*============================================================

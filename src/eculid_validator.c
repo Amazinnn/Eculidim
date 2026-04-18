@@ -9,7 +9,7 @@ ValidationResult ec_validate_syntax(const char *latex) {
         snprintf(r.msg, sizeof(r.msg), "%s", ec_parse_error_msg());
         r.err_pos = ec_parse_error_pos();
     }
-    ec_free(e);
+    ec_free_expr(e);
     return r;
 }
 

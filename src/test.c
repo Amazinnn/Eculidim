@@ -1,6 +1,9 @@
 #include "eculid.h"
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
+
+#define M_PI 3.14159265358979323846
 
 static int pass = 0, fail = 0;
 
@@ -30,62 +33,62 @@ int main(void) {
     {
         Expr *e = ec_parse("x + 1");
         TEST("parse add", e != NULL);
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     {
         Expr *e = ec_parse("x^2 - 2*x + 1");
         TEST("parse pow/sub/mul", e != NULL);
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     {
         Expr *e = ec_parse("\\frac{1}{2}");
         TEST("parse frac", e != NULL);
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     {
         Expr *e = ec_parse("\\sin(x)");
         TEST("parse sin", e != NULL);
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     /* AST */
     {
         Expr *n = ec_num(42);
         TEST("ec_num", n && n->type == EC_NUM && n->num_val == 42.0);
-        ec_free(n);
+        ec_free_expr(n);
     }
 
     {
         Expr *v = ec_vars("x");
         TEST("ec_vars", v && v->type == EC_VAR && strcmp(v->var_str, "x") == 0);
-        ec_free(v);
+        ec_free_expr(v);
     }
 
     {
         Expr *a = ec_binary(EC_ADD, ec_num(1), ec_num(2));
         TEST("ec_binary", a && a->type == EC_ADD);
-        ec_free(a);
+        ec_free_expr(a);
     }
 
     {
         Expr *e = ec_num(0);
         TEST("ec_is_zero", ec_is_zero(e));
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     {
         Expr *e = ec_num(1);
         TEST("ec_is_one", ec_is_one(e));
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     {
         Expr *e = ec_num(-5);
         TEST("ec_is_negative", ec_is_negative(e));
-        ec_free(e);
+        ec_free_expr(e);
     }
 
     {
@@ -93,7 +96,7 @@ int main(void) {
         Expr *sum = ec_binary(EC_ADD, a, b);
         Expr *c = ec_copy(sum);
         TEST("ec_copy", c && c->type == EC_ADD);
-        ec_free(sum); ec_free(c);
+        ec_free_expr(sum); ec_free_expr(c);
     }
 
     /* 求值 */
@@ -103,7 +106,7 @@ int main(void) {
         Expr *e = ec_num(3.14);
         ECValue v = ec_eval(e, &env);
         TEST("eval num", v.type == EC_VAL_REAL && fabs(v.real - 3.14) < 1e-9);
-        ec_free(e); ec_env_free(&env);
+        ec_free_expr(e); ec_env_free(&env);
     }
 
     {
@@ -138,7 +141,7 @@ int main(void) {
         char *l = ec_to_latex(d);
         TEST("diff x^2", d != NULL);
         printf("  diff(x^2) = %s\n", l);
-        ec_free(e); ec_free(d); ec_free(l);
+        ec_free_expr(e); ec_free_expr(d); ec_free(l);
     }
 
     /* 化简 */
@@ -146,7 +149,7 @@ int main(void) {
         Expr *e = ec_parse("x + 0");
         Expr *s = ec_simplify(e);
         TEST("simplify x+0", s != NULL);
-        ec_free(e); ec_free(s);
+        ec_free_expr(e); ec_free_expr(s);
     }
 
     /* 符号表 */
@@ -164,7 +167,7 @@ int main(void) {
         char *l = ec_to_latex(e);
         TEST("latex output", l != NULL && strlen(l) > 0);
         printf("  latex: %s\n", l);
-        ec_free(e); ec_free(l);
+        ec_free_expr(e); ec_free(l);
     }
 
     /* 推导步骤 */

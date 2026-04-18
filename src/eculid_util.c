@@ -20,9 +20,14 @@ char ec_error[256] = {0};
 char* ec_strdup(const char *s) { if (!s) return NULL; size_t n = strlen(s)+1; char *p = ec_malloc(n); memcpy(p, s, n); return p; }
 char* ec_strndup(const char *s, size_t n) { if (!s) return NULL; char *p = ec_malloc(n+1); strncpy(p, s, n); p[n] = 0; return p; }
 char* ec_strcat3(const char *a, const char *b, const char *c) {
-    size_t n = (a ? strlen(a) : 0) + (b ? strlen(b) : 0) + (c ? strlen(c) : 0) + 1;
-    char *r = ec_malloc(n); r[0] = 0;
-    if (a) strcat(r, a); if (b) strcat(r, b); if (c) strcat(r, c);
+    size_t na = a ? strlen(a) : 0;
+    size_t nb = b ? strlen(b) : 0;
+    size_t nc = c ? strlen(c) : 0;
+    char *r = ec_malloc(na + nb + nc + 1);
+    r[0] = 0;
+    if (a) strcat(r, a);
+    if (b) strcat(r, b);
+    if (c) strcat(r, c);
     return r;
 }
 void ec_trim(char *s) {

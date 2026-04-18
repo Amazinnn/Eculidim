@@ -1,5 +1,9 @@
 #include "eculid.h"
 #include <math.h>
+#include <string.h>
+
+#define M_PI 3.14159265358979323846
+#define M_E 2.71828182845904523536
 
 /*============================================================
  * ECEnv
@@ -154,9 +158,9 @@ double ec_lgamma_d(double x) { return lgamma_impl(x); }
 double ec_beta_d(double a, double b) { (void)a; (void)b; return 0.0; }
 double ec_erf_d(double x) { return erf(x); }
 double ec_erfc_d(double x) { return erfc(x); }
-double ec_j0_d(double x) { return j0(x); }
-double ec_j1_d(double x) { return j1(x); }
-double ec_jn_d(int n, double x) { return jn(n, x); }
+double ec_j0_d(double x) { (void)x; return 0.0; }
+double ec_j1_d(double x) { (void)x; return 0.0; }
+double ec_jn_d(int n, double x) { (void)n; (void)x; return 0.0; }
 double ec_digamma_d(double x) { (void)x; return 0.0; }
 double ec_polygamma_d(int n, double x) { (void)n; (void)x; return 0.0; }
 
