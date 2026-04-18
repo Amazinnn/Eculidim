@@ -1,0 +1,20 @@
+CC      = "C:\Program Files (x86)\Dev-Cpp\MinGW32\bin\gcc"
+CFLAGS  = -std=c99 -Wall -Wextra -O2 -I./include -Isrc
+SRCS    = $(wildcard src/*.c)
+OBJS    = $(SRCS:.c=.o)
+OUT     = Eculidim
+
+.PHONY: all clean test
+
+all: $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) -o $(OUT) -lm
+
+src/%.o: src/%.c include/eculid.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(OUT) src/*.o
+
+test: $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) src/test.c -o test -lm
+	./test
