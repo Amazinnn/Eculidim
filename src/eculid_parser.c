@@ -11,13 +11,31 @@ void parser_init(Parser *P, const char *input) {
 
 /* 前向声明 */
 static Expr* parse_expr(Parser *P);
+static Expr* parse_relation(Parser *P);
 static Expr* parse_addsub(Parser *P);
 static Expr* parse_muldiv(Parser *P);
 static Expr* parse_pow(Parser *P);
 static Expr* parse_unary(Parser *P);
 static Expr* parse_primary(Parser *P);
 
-static Expr* parse_expr(Parser *P) { return parse_addsub(P); }
+static Expr* parse_expr(Parser *P) { return parse_relation(P); }
+
+static Expr* parse_relation(Parser *P) {
+    Expr *left = parse_addsub(P);
+    TokenType t = P->lexer->cur.type;
+    if (t == TK_EQ || t == TK_LT || t == TK_GT || t == TK_LE || t == TK_GE || t == TK_NE) {
+        lex_next(P->lexer);
+        Expr *right = parse_addsub(P);
+        ECNodeType op = EC_EQ;
+        if (t == TK_LT) op = EC_LT;
+        else if (t == TK_GT) op = EC_GT;
+        else if (t == TK_LE) op = EC_LE;
+        else if (t == TK_GE) op = EC_GE;
+        else if (t == TK_NE) op = EC_NE;
+        return ec_binary(op, left, right);
+    }
+    return left;
+}
 
 static Expr* parse_addsub(Parser *P) {
     Expr *left = parse_muldiv(P);
@@ -42,6 +60,46 @@ static Expr* parse_muldiv(Parser *P) {
 }
 
 static Expr* parse_pow(Parser *P) {
+    /* \int expr — must bind tighter than ^ so integrand x^2 is fully parsed.
+       After handling \int, return directly to avoid outer ^ check wrapping EC_INT */
+    if (P->lexer->cur.type == TK_CMD) {
+        const char *cmd = lex_cmd_name(&P->lexer->cur);
+        if (strcmp(cmd, "\\int") == 0) {
+            lex_next(P->lexer);
+            Expr *lower = NULL, *upper = NULL;
+            if (P->lexer->cur.type == TK_UNDERSCORE || P->lexer->cur.type == TK_LBRACE) {
+                if (P->lexer->cur.type == TK_UNDERSCORE) {
+                    lex_next(P->lexer); lower = parse_unary(P);
+                } else {
+                    lex_next(P->lexer);
+                    if (P->lexer->cur.type == TK_UNDERSCORE) {
+                        lex_next(P->lexer); lower = parse_unary(P);
+                    }
+                }
+                if (lower && P->lexer->cur.type == TK_CARET) {
+                    lex_next(P->lexer);
+                    if (P->lexer->cur.type == TK_LBRACE) {
+                        lex_next(P->lexer); upper = parse_unary(P);
+                        if (P->lexer->cur.type == TK_RBRACE) lex_next(P->lexer);
+                    } else {
+                        upper = parse_unary(P);
+                    }
+                }
+            }
+            Expr *arg = parse_expr(P);
+            if (lower && upper) {
+                Expr *node = ec_malloc(sizeof(Expr));
+                node->type = EC_INT;
+                node->arg = arg; node->deriv_var = 'x';
+                node->left = lower; node->right = upper;
+                node->cond = NULL; node->var_str = NULL;
+                node->var_name = 0; node->num_val = 0;
+                return node;
+            }
+            ec_free_expr(lower); ec_free_expr(upper);
+            return ec_intg(arg, 'x');
+        }
+    }
     Expr *base = parse_unary(P);
     if (P->lexer->cur.type == TK_CARET) {
         lex_next(P->lexer);
@@ -72,23 +130,29 @@ static Expr* parse_primary(Parser *P) {
 
     if (t.type == TK_LPAREN) {
         Expr *e = parse_expr(P);
-        /* 期望 TK_RPAREN */
         if (P->lexer->cur.type == TK_RPAREN) lex_next(P->lexer);
+        return e;
+    }
+
+    /* {} grouping (same as parentheses) */
+    if (t.type == TK_LBRACE) {
+        Expr *e = parse_expr(P);
+        if (P->lexer->cur.type == TK_RBRACE) lex_next(P->lexer);
         return e;
     }
 
     if (t.type == TK_CMD) {
         const char *cmd = t.text;
 
-        /* \frac{a}{b} */
+        /* \frac{a}{b} — use parse_expr so numerator/denominator can be expressions */
         if (strcmp(cmd, "\\frac") == 0) {
-            Expr *num = parse_primary(P);
-            Expr *den = parse_primary(P);
+            Expr *num = parse_expr(P);
+            Expr *den = parse_expr(P);
             return ec_binary(EC_DIV, num, den);
         }
         /* \sqrt{x} */
         if (strcmp(cmd, "\\sqrt") == 0) {
-            Expr *arg = parse_primary(P);
+            Expr *arg = parse_unary(P);
             return ec_unary(EC_SQRT, arg);
         }
         /* \sin, \cos, \tan, ... */
@@ -98,6 +162,10 @@ static Expr* parse_primary(Parser *P) {
         if (strcmp(cmd, "\\cot") == 0) return ec_unary(EC_COT, parse_unary(P));
         if (strcmp(cmd, "\\sec") == 0) return ec_unary(EC_SEC, parse_unary(P));
         if (strcmp(cmd, "\\csc") == 0) return ec_unary(EC_CSC, parse_unary(P));
+        if (strcmp(cmd, "\\gamma") == 0) return ec_unary(EC_GAMMA, parse_unary(P));
+        if (strcmp(cmd, "\\Gamma") == 0) return ec_unary(EC_GAMMA, parse_unary(P));
+        if (strcmp(cmd, "\\lgamma") == 0) return ec_unary(EC_LGAMMA, parse_unary(P));
+        if (strcmp(cmd, "\\lnGamma") == 0) return ec_unary(EC_LGAMMA, parse_unary(P));
         if (strcmp(cmd, "\\exp") == 0) return ec_unary(EC_EXP, parse_unary(P));
         if (strcmp(cmd, "\\ln") == 0) return ec_unary(EC_LN, parse_unary(P));
         if (strcmp(cmd, "\\log") == 0) return ec_unary(EC_LOG, parse_unary(P));
@@ -115,7 +183,6 @@ static Expr* parse_primary(Parser *P) {
         if (strcmp(cmd, "\\i") == 0) return ec_const(EC_I);
         if (strcmp(cmd, "\\infty") == 0) return ec_const(EC_INF);
         if (strcmp(cmd, "\\lim") == 0) return parse_unary(P); /* TODO */
-        if (strcmp(cmd, "\\int") == 0) return parse_unary(P); /* TODO */
         if (strcmp(cmd, "\\sum") == 0) return parse_unary(P); /* TODO */
     }
 
@@ -125,7 +192,10 @@ static Expr* parse_primary(Parser *P) {
 
 Expr* parser_parse(Parser *P) {
     Expr *e = parse_expr(P);
-    if (P->lexer->cur.type != TK_EOF && P->lexer->cur.type != TK_ERR) {
+    /* Tolerate trailing closing delimiters (consumed inside braces/paren) */
+    if (P->lexer->cur.type != TK_EOF && P->lexer->cur.type != TK_ERR
+        && P->lexer->cur.type != TK_RBRACE && P->lexer->cur.type != TK_RPAREN
+        && P->lexer->cur.type != TK_RBRACKET) {
         snprintf(P->err, sizeof(P->err), "意外的 token: %s", P->lexer->cur.text);
         P->err_pos = P->lexer->cur.pos;
     }

@@ -1057,24 +1057,27 @@ double ec_trunc_d(double x) { return trunc(x); }
 /*============================================================
  * 特殊函数
  *============================================================*/
-static double gamma_impl(double x) { (void)x; return 0.0; }
-static double lgamma_impl(double x) { (void)x; return 0.0; }
-
 double ec_factorial_d(int n) {
     double r = 1.0;
     for (int i = 2; i <= n; i++) r *= i;
     return r;
 }
-double ec_gamma_d(double x) { return gamma_impl(x); }
-double ec_lgamma_d(double x) { return lgamma_impl(x); }
+double ec_gamma_d(double x) {
+    double r = tgamma(x);
+    return r;
+}
+double ec_lgamma_d(double x) {
+    double r = lgamma(x);
+    return r;
+}
 double ec_beta_d(double a, double b) { (void)a; (void)b; return 0.0; }
 double ec_erf_d(double x) { return erf(x); }
 double ec_erfc_d(double x) { return erfc(x); }
-double ec_j0_d(double x) { (void)x; return 0.0; }
-double ec_j1_d(double x) { (void)x; return 0.0; }
-double ec_jn_d(int n, double x) { (void)n; (void)x; return 0.0; }
-double ec_digamma_d(double x) { (void)x; return 0.0; }
-double ec_polygamma_d(int n, double x) { (void)n; (void)x; return 0.0; }
+double ec_j0_d(double x) { return NAN; }
+double ec_j1_d(double x) { return NAN; }
+double ec_jn_d(int n, double x) { (void)n; (void)x; return NAN; }
+double ec_digamma_d(double x) { (void)x; return NAN; }
+double ec_polygamma_d(int n, double x) { (void)n; (void)x; return NAN; }
 
 /*============================================================
  * 复数运算

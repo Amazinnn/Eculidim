@@ -74,8 +74,19 @@ Eculidim 支持以下 LaTeX 命令（EC003 错误时对照）：
 ### 初等常数
 `\pi`, `\e`, `\i`, `\infty`
 
+### 特殊函数
+`\gamma`, `\Gamma`（Gamma 函数，$\Gamma(n) = (n-1)!$），`\lgamma`（对数 Gamma，$\ln \Gamma(x)$）
+
 ### 微积分
 `\int`（不定积分）, `\int_{a}^{b}`（定积分）, `\frac{d}{dx}`（求导）, `\lim`, `\sum`, `\prod`
+
+### 命令语法（REPL 组合模式）
+
+| 命令 | 语法 | 示例 |
+|------|------|------|
+| `\solve` | `\solve <expr>` 或 `\solve <inequality>` | `\solve x^2-4=0` / `\solve x^2-4<0` |
+| `\limit` | `\limit <var>-><point> <expr>` | `\limit x->0 sin(x)/x` |
+| `\sum` | `\sum <var>=<lo>..<hi> <expr>` | `\sum n=1..10 n^2` |
 
 ---
 

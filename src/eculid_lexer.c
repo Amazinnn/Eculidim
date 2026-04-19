@@ -58,6 +58,24 @@ Token lex_next(Lexer *L) {
     if (c == '|') { L->pos++; L->cur = (Token){TK_PIPE, {"|"}, 0, start, 1}; return L->cur; }
     if (c == '=') { L->pos++; L->cur = (Token){TK_EQ, {"="}, 0, start, 1}; return L->cur; }
     if (c == '%') { L->pos++; L->cur = (Token){TK_PERCENT, {"%"}, 0, start, 1}; return L->cur; }
+    if (c == '<') {
+        L->pos++;
+        if (L->pos < L->len && L->input[L->pos] == '=') { L->pos++; L->cur = (Token){TK_LE, {"<="}, 0, start, 2}; }
+        else { L->cur = (Token){TK_LT, {"<"}, 0, start, 1}; }
+        return L->cur;
+    }
+    if (c == '>') {
+        L->pos++;
+        if (L->pos < L->len && L->input[L->pos] == '=') { L->pos++; L->cur = (Token){TK_GE, {">="}, 0, start, 2}; }
+        else { L->cur = (Token){TK_GT, {">"}, 0, start, 1}; }
+        return L->cur;
+    }
+    if (c == '!') {
+        L->pos++;
+        if (L->pos < L->len && L->input[L->pos] == '=') { L->pos++; L->cur = (Token){TK_NE, {"!="}, 0, start, 2}; }
+        else { L->cur = make_err("'!' 只能用于 '!='"); }
+        return L->cur;
+    }
     if (c == '~') { L->pos++; L->cur = (Token){TK_TILDE, {"~"}, 0, start, 1}; return L->cur; }
 
     /* 数字 */
@@ -88,7 +106,7 @@ Token lex_next(Lexer *L) {
     if (c == '\\') {
         int i = 0; L->pos++;
         char buf[64] = "\\";
-        while (L->pos < L->len && is_alpha_(L->input[L->pos])) {
+        while (L->pos < L->len && is_alpha_(L->input[L->pos]) && L->input[L->pos] != '_') {
             if (i < 62) buf[++i] = L->input[L->pos++];
         }
         buf[i+1] = 0;
@@ -122,7 +140,10 @@ const char* token_type_name(TokenType t) {
         case TK_COMMA: return "COMMA"; case TK_PIPE: return "PIPE";
         case TK_TILDE: return "TILDE";
         case TK_CMD: return "CMD"; case TK_CMD_MATH: return "CMD_MATH";
-        case TK_EQ: return "EQ"; case TK_LOR: return "LOR"; case TK_LAND: return "LAND";
+        case TK_EQ: return "EQ"; case TK_NE: return "NE";
+        case TK_LT: return "LT"; case TK_GT: return "GT";
+        case TK_LE: return "LE"; case TK_GE: return "GE";
+        case TK_LOR: return "LOR"; case TK_LAND: return "LAND";
         case TK_PERCENT: return "PERCENT";
         case TK_PLUS: return "PLUS"; case TK_MINUS: return "MINUS";
         case TK_MUL: return "MUL"; case TK_DIV: return "DIV";

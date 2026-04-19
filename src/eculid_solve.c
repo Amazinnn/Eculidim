@@ -423,15 +423,117 @@ EculidRoots ec_solve_poly(Expr *e, const char *var) {
 
 int ec_factor_poly(Expr *e, const char *var,
                     Expr **factors, int max_factors) {
-    (void)e; (void)var; (void)factors; (void)max_factors;
+    if (!e || !var || !factors || max_factors <= 0) return 0;
+    int v = (int)var[0];
+    double coeffs[16] = {0};
+    int deg = extract_coeffs(e, v, coeffs, 16);
+    if (deg <= 0 || deg > 4) return 0;
+
+    if (deg == 2) {
+        double a = coeffs[2], b = coeffs[1], c = coeffs[0];
+        if (fabs(a) < 1e-15) return 0;
+        for (int p = -10; p <= 10; p++) {
+            for (int q = 1; q <= 10; q++) {
+                double r = (double)p / (double)q;
+                double val = a*r*r + b*r + c;
+                if (fabs(val) < 1e-10) {
+                    factors[0] = ec_binary(EC_SUB, ec_varc(v), ec_num(r));
+                    double q_b = b - a * r;
+                    Expr *quotient = ec_binary(EC_ADD,
+                        ec_binary(EC_MUL, ec_num(a), ec_binary(EC_POW, ec_varc(v), ec_num(1))),
+                        ec_num(q_b));
+                    Expr *simp = ec_simplify(quotient);
+                    ec_free_expr(quotient);
+                    factors[1] = simp;
+                    return 2;
+                }
+            }
+        }
+    }
     return 0;
 }
 
-/*============================================================
- * Inequality solving stub
- *============================================================*/
 ECInterval* ec_solve_inequality(Expr *ineq, const char *var, int *count) {
-    (void)ineq; (void)var; *count = 0; return NULL;
+    if (!ineq || !var || !count) { *count = 0; return NULL; }
+    *count = 0;
+    ECNodeType op = EC_NIL;
+    if (ineq->type == EC_LT || ineq->type == EC_LE ||
+        ineq->type == EC_GT || ineq->type == EC_GE) {
+        op = ineq->type;
+    } else {
+        return NULL;
+    }
+    /* Normalize: lhs - rhs */
+    Expr *norm = ec_binary(EC_SUB, ec_copy(ineq->left), ec_copy(ineq->right));
+    Expr *simplified = ec_simplify(norm);
+    ec_free_expr(norm);
+    Expr *eval_expr = ec_copy(simplified);
+
+    EculidRoots r = ec_solve(simplified, var);
+
+    /* Sort roots in ascending order */
+    if (r.count > 1) {
+        double roots_arr[64];
+        for (int k = 0; k < r.count; k++)
+            roots_arr[k] = r.roots[k]->num_val;
+        for (int i = 0; i < r.count - 1; i++) {
+            for (int j = 0; j < r.count - i - 1; j++) {
+                if (roots_arr[j] > roots_arr[j+1]) {
+                    double tmp = roots_arr[j];
+                    roots_arr[j] = roots_arr[j+1];
+                    roots_arr[j+1] = tmp;
+                }
+            }
+        }
+        for (int k = 0; k < r.count; k++) {
+            ec_free_expr(r.roots[k]);
+            r.roots[k] = ec_num(roots_arr[k]);
+        }
+    }
+
+    int inclusive = (op == EC_LE || op == EC_GE) ? 1 : 0;
+    int want_positive = (op == EC_GT || op == EC_GE) ? 1 : 0;
+
+    ECInterval *result = ec_malloc((r.count + 1) * sizeof(ECInterval));
+    int n_intervals = 0;
+
+    for (int i = 0; i <= r.count; i++) {
+        double lo, hi, mid;
+        if (i == 0) {
+            lo = -HUGE_VAL; hi = r.count > 0 ? r.roots[0]->num_val : HUGE_VAL;
+        } else if (i == r.count) {
+            lo = r.roots[r.count - 1]->num_val; hi = HUGE_VAL;
+        } else {
+            lo = r.roots[i - 1]->num_val; hi = r.roots[i]->num_val;
+        }
+        if (hi == HUGE_VAL) {
+            mid = lo + 1.0;
+        } else if (lo == -HUGE_VAL) {
+            mid = hi - 1.0;
+        } else {
+            mid = (lo + hi) * 0.5;
+        }
+        double fmid = eval_at(eval_expr, var, mid);
+        int keep = 0;
+        if (inclusive && fabs(fmid) < 1e-12) {
+            keep = 1;
+        } else if (want_positive && fmid > 0) {
+            keep = 1;
+        } else if (!want_positive && fmid < 0) {
+            keep = 1;
+        }
+        if (keep) {
+            result[n_intervals].lo = (lo == -HUGE_VAL) ? ec_const(EC_NINF) : ec_num(lo);
+            result[n_intervals].hi = (hi == HUGE_VAL) ? ec_const(EC_INF) : ec_num(hi);
+            result[n_intervals].inclusive = inclusive;
+            n_intervals++;
+        }
+    }
+
+    ec_free_expr(eval_expr);
+    ec_roots_free(&r);
+    *count = n_intervals;
+    return result;
 }
 
 /*============================================================
@@ -447,5 +549,10 @@ void ec_roots_free(EculidRoots *r) {
 }
 
 void ec_interval_free(ECInterval *iv, int n) {
-    (void)iv; (void)n;
+    if (!iv) return;
+    for (int i = 0; i < n; i++) {
+        ec_free_expr(iv[i].lo);
+        ec_free_expr(iv[i].hi);
+    }
+    ec_free(iv);
 }

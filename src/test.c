@@ -182,6 +182,72 @@ int main(void) {
         ec_free(r); ec_derivation_free(d);
     }
 
+    /* ---- 关系运算符解析 ---- */
+    {
+        Expr *e = ec_parse("x+1<3");
+        CK("parse relation <", e != NULL && e->type == EC_LT);
+        ec_free_expr(e);
+    }
+    {
+        Expr *e = ec_parse("x>=2");
+        CK("parse relation >=", e != NULL && e->type == EC_GE);
+        ec_free_expr(e);
+    }
+    {
+        Expr *e = ec_parse("x^2-4=0");
+        CK("parse relation =", e != NULL && e->type == EC_EQ);
+        ec_free_expr(e);
+    }
+    {
+        Expr *e = ec_parse("x!=5");
+        CK("parse relation !=", e != NULL && e->type == EC_NE);
+        ec_free_expr(e);
+    }
+
+    /* ---- Gamma 函数 ---- */
+    CK_DBL("gamma(5)", ec_gamma_d(5.0), 24.0, 1e-9);
+    CK_DBL("lgamma(5)", ec_lgamma_d(5.0), log(24.0), 1e-9);
+
+    /* ---- 方程求解 ---- */
+    {
+        Expr *e = ec_parse("x^2-4=0");
+        EculidRoots r = ec_solve(e, "x");
+        CK("solve quadratic", r.count == 2);
+        ec_roots_free(&r); ec_free_expr(e);
+    }
+
+    /* ---- 不等式求解 ---- */
+    {
+        Expr *e = ec_parse("x^2-4<0");
+        int count = 0;
+        ECInterval *iv = ec_solve_inequality(e, "x", &count);
+        CK("solve inequality x^2<4", count > 0);
+        ec_interval_free(iv, count); ec_free_expr(e);
+    }
+
+    /* ---- 极限 ---- */
+    {
+        Expr *e = ec_parse("sin(x)");
+        Expr *L = ec_limit(e, 'x', ec_num(0), EC_LIMIT_BOTH);
+        CK("limit sin(x) x->0", L != NULL);
+        ec_free_expr(e); if (L) ec_free_expr(L);
+    }
+
+    /* ---- 求和 ---- */
+    {
+        Expr *e = ec_parse("n^2");
+        Expr *s = ec_sum(ec_copy(e), "n", ec_num(1), ec_num(10));
+        CK("sum n^2 from 1 to 10", s != NULL);
+        ec_free_expr(e); ec_free_expr(s);
+    }
+
+    /* ---- Gamma 函数节点 ---- */
+    {
+        Expr *e = ec_unary(EC_GAMMA, ec_num(5));
+        CK("gamma node type", e != NULL && e->type == EC_GAMMA);
+        ec_free_expr(e);
+    }
+
     printf("\n=== 结果: %d 通过, %d 失败 ===\n", pass, fail);
     return fail > 0 ? 1 : 0;
 }

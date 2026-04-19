@@ -83,6 +83,33 @@ ECNodeType ec_latex_cmd_lookup(const char *cmd) {
     return EC_NIL;
 }
 
+/* Returns 1 if the expression needs parentheses when used as a child
+   of a binary operator in LaTeX output. */
+static int latex_needs_parens(const Expr *e) {
+    if (!e) return 0;
+    switch (e->type) {
+        case EC_NUM: case EC_VAR: case EC_PI: case EC_E:
+        case EC_I: case EC_INF: case EC_NINF:
+            return 0;
+        case EC_POW: case EC_SQRT: case EC_CBRT:
+        case EC_SIN: case EC_COS: case EC_TAN: case EC_EXP:
+        case EC_LN: case EC_LOG: case EC_LOG10: case EC_LOG2: case EC_ABS:
+        case EC_FLOOR: case EC_CEIL: case EC_SIGN:
+        case EC_ASIN: case EC_ACOS: case EC_ATAN:
+        case EC_SINH: case EC_COSH: case EC_TANH:
+        case EC_COT: case EC_SEC: case EC_CSC:
+        case EC_ACOT: case EC_ASEC: case EC_ACSC:
+        case EC_COTH: case EC_SECH: case EC_CSCH:
+        case EC_ASINH: case EC_ACOSH: case EC_ATANH:
+        case EC_EXP2: case EC_EXPM1: case EC_LN1P:
+        case EC_ROUND: case EC_TRUNC: case EC_MOD:
+        case EC_REM: case EC_FACTORIAL:
+            return 0;
+        default:
+            return 1;
+    }
+}
+
 /*============================================================
  * LaTeX 输出
  *============================================================*/
@@ -95,22 +122,31 @@ static void latex_rec(const Expr *e, char *buf, size_t cap, size_t *pos) {
             else *pos += snprintf(buf + *pos, cap - *pos, "%c", e->var_name);
             break;
         case EC_ADD:
-            latex_rec(e->left, buf, cap, pos);
+            if (latex_needs_parens(e->left)) { *pos += snprintf(buf + *pos, cap - *pos, "("); latex_rec(e->left, buf, cap, pos); *pos += snprintf(buf + *pos, cap - *pos, ")"); }
+            else latex_rec(e->left, buf, cap, pos);
             *pos += snprintf(buf + *pos, cap - *pos, " + ");
-            latex_rec(e->right, buf, cap, pos);
+            if (latex_needs_parens(e->right)) { *pos += snprintf(buf + *pos, cap - *pos, "("); latex_rec(e->right, buf, cap, pos); *pos += snprintf(buf + *pos, cap - *pos, ")"); }
+            else latex_rec(e->right, buf, cap, pos);
             break;
         case EC_SUB:
-            latex_rec(e->left, buf, cap, pos);
+            if (latex_needs_parens(e->left)) { *pos += snprintf(buf + *pos, cap - *pos, "("); latex_rec(e->left, buf, cap, pos); *pos += snprintf(buf + *pos, cap - *pos, ")"); }
+            else latex_rec(e->left, buf, cap, pos);
             *pos += snprintf(buf + *pos, cap - *pos, " - ");
-            latex_rec(e->right, buf, cap, pos);
+            if (latex_needs_parens(e->right)) { *pos += snprintf(buf + *pos, cap - *pos, "("); latex_rec(e->right, buf, cap, pos); *pos += snprintf(buf + *pos, cap - *pos, ")"); }
+            else latex_rec(e->right, buf, cap, pos);
             break;
-        case EC_MUL:
-            *pos += snprintf(buf + *pos, cap - *pos, "(");
+        case EC_MUL: {
+            int lpar = latex_needs_parens(e->left);
+            int rpar = latex_needs_parens(e->right);
+            if (lpar) { *pos += snprintf(buf + *pos, cap - *pos, "("); }
             latex_rec(e->left, buf, cap, pos);
-            *pos += snprintf(buf + *pos, cap - *pos, ") \\cdot (");
+            if (lpar) { *pos += snprintf(buf + *pos, cap - *pos, ")"); }
+            *pos += snprintf(buf + *pos, cap - *pos, " \\cdot ");
+            if (rpar) { *pos += snprintf(buf + *pos, cap - *pos, "("); }
             latex_rec(e->right, buf, cap, pos);
-            *pos += snprintf(buf + *pos, cap - *pos, ")");
+            if (rpar) { *pos += snprintf(buf + *pos, cap - *pos, ")"); }
             break;
+        }
         case EC_DIV:
             *pos += snprintf(buf + *pos, cap - *pos, "\\frac{");
             latex_rec(e->left, buf, cap, pos);
@@ -147,7 +183,7 @@ static void latex_rec(const Expr *e, char *buf, size_t cap, size_t *pos) {
         case EC_ROUND: case EC_TRUNC: case EC_FDIM: case EC_MOD:
         case EC_LT: case EC_LE: case EC_GT: case EC_GE:
         case EC_EQ: case EC_NE: case EC_LAND: case EC_LOR: case EC_LNOT:
-        case EC_REM: case EC_FACTORIAL: {
+        case EC_REM: case EC_FACTORIAL: case EC_GAMMA: case EC_LGAMMA: {
             static const char *names[] = {
                 [EC_SIN]="sin",[EC_COS]="cos",[EC_TAN]="tan",
                 [EC_COT]="cot",[EC_SEC]="sec",[EC_CSC]="csc",
@@ -167,6 +203,7 @@ static void latex_rec(const Expr *e, char *buf, size_t cap, size_t *pos) {
                 [EC_LAND]="\\land",[EC_LOR]="\\lor",[EC_LNOT]="\\lnot",
                 [EC_MOD]="\\bmod",[EC_REM]="\\rem",[EC_FDIM]="\\fdim",
                 [EC_FACTORIAL]="!",
+                [EC_GAMMA]="Gamma",[EC_LGAMMA]="lnGamma",
             };
             const char *n = names[e->type] ? names[e->type] : "\\text{op}";
             if (e->type == EC_LT || e->type == EC_LE || e->type == EC_GT ||
@@ -195,7 +232,8 @@ static void latex_rec(const Expr *e, char *buf, size_t cap, size_t *pos) {
         case EC_PI: *pos += snprintf(buf + *pos, cap - *pos, "\\pi"); break;
         case EC_E: *pos += snprintf(buf + *pos, cap - *pos, "e"); break;
         case EC_I: *pos += snprintf(buf + *pos, cap - *pos, "i"); break;
-        case EC_INF: *pos += snprintf(buf + *pos, cap - *pos, "\\infty"); break;
+        case EC_INF:  *pos += snprintf(buf + *pos, cap - *pos, "\\infty"); break;
+        case EC_NINF: *pos += snprintf(buf + *pos, cap - *pos, "-\\infty"); break;
         case EC_INT:
             if (e->left && e->right) {
                 *pos += snprintf(buf + *pos, cap - *pos, "\\int_{");

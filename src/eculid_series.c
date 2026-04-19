@@ -47,56 +47,58 @@ Expr* ec_taylor(Expr *e, const char *var, const Expr *a, int n) {
     char v = var[0];
     if (n < 0) n = 0;
 
-    /* Evaluate the expansion point */
+    /* Evaluate the expansion point: default to 0 (Maclaurin) */
     double a_val = 0.0;
-    int a_is_num = 0;
+    int have_a = 1; /* always have a numeric a for evaluation */
+
     if (a) {
-        if (a->type == EC_NUM) { a_val = a->num_val; a_is_num = 1; }
-        else {
+        if (a->type == EC_NUM) {
+            a_val = a->num_val;
+        } else {
             ECValue av = ec_eval(a, NULL);
-            if (av.type == EC_VAL_REAL) { a_val = av.real; a_is_num = 1; }
+            if (av.type == EC_VAL_REAL) { a_val = av.real; }
+            else { have_a = 0; }
             ec_value_free(&av);
         }
     }
 
-    /* Build sum_{k=0}^{n} f^{(k)}(a)/k! * (x-a)^k */
+    /* Build sum_{k=0}^{n} f^{(k)}(a)/k! * (var-a)^k */
     Expr *result = NULL;
 
     for (int k = 0; k <= n; k++) {
         /* Compute f^{(k)}(e) */
         Expr *deriv_k = ec_diff_n(e, v, k);
+        if (!deriv_k) { deriv_k = ec_num(0); }
+
+        /* Evaluate f^{(k)}(a) numerically via environment */
         double fk_val;
-        if (a_is_num) {
-            fk_val = eval_point(deriv_k, v, a_val);
+        if (have_a) {
+            fk_val = eval_point(deriv_k, var[0], a_val);
         } else {
-            /* Keep symbolic: substitute var -> a */
-            Expr *deriv_at_a = a ? ec_substitute(deriv_k, var, a) : deriv_k;
-            ECValue fk_v = ec_eval(deriv_at_a, NULL);
-            fk_val = ec_value_as_real(&fk_v);
-            ec_value_free(&fk_v);
-            if (deriv_at_a != deriv_k) ec_free_expr(deriv_at_a);
+            fk_val = 0.0;
         }
 
-        /* term = f^{(k)}(a) / k! * (var - a)^k */
+        /* k! */
         double fact_k = 1.0;
-        for (int j = 2; j <= k; j++) fact_k *= j;
+        for (int j = 2; j <= k; j++) fact_k *= (double)j;
 
         /* (var - a)^k */
         Expr *var_minus_a;
-        if (a_is_num) {
-            Expr *a_expr = ec_num(a_val);
-            var_minus_a = ec_binary(EC_SUB, ec_varc(v), a_expr);
+        if (have_a) {
+            var_minus_a = ec_binary(EC_SUB, ec_varc(v), ec_num(a_val));
         } else if (a) {
             var_minus_a = ec_binary(EC_SUB, ec_varc(v), ec_copy(a));
         } else {
-            var_minus_a = ec_copy(ec_vars(var));
+            var_minus_a = ec_varc(v);
         }
 
         Expr *pow_term;
-        if (k == 0)
+        if (k == 0) {
             pow_term = ec_num(1);
-        else
+            ec_free_expr(var_minus_a);
+        } else {
             pow_term = ec_binary(EC_POW, var_minus_a, ec_num((double)k));
+        }
 
         Expr *term = ec_binary(EC_MUL, ec_num(fk_val / fact_k), pow_term);
         ec_free_expr(deriv_k);

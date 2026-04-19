@@ -10,7 +10,12 @@ static int expr_is_simple_var(const Expr *e, char var) {
     return e && e->type == EC_VAR && e->var_name == var && e->var_str == NULL;
 }
 
+static int expr_var_matches(const Expr *e, char var) {
+    return e && e->type == EC_VAR && e->var_name == var;
+}
+
 static int node_has_integral(const Expr *e, char var);
+static Expr* integ_rec(const Expr *e, char var);
 
 static int sub_has_integral(const Expr *e, char var) {
     return node_has_integral(e, var);
@@ -62,10 +67,112 @@ int ec_has_integral(Expr *e, char var) {
 }
 
 /*============================================================
+ * Integration by parts helpers
+ *============================================================*/
+static Expr* integ_by_parts(const Expr *e, char var) {
+    /* ∫u·dv = u·v - ∫v·du
+     * Strategy: u = polynomial part, dv = the rest.
+     * Returns NULL if no pattern matches.
+     */
+    if (e->type != EC_MUL) return NULL;
+
+    const Expr *A = e->left;
+    const Expr *B = e->right;
+    if (!A || !B) return NULL;
+
+    /* Normalize: ensure A is the polynomial */
+    if (B->type == EC_POW &&
+        B->right && B->right->type == EC_NUM && B->right->num_val >= 0 &&
+        B->left && B->left->type == EC_VAR && B->left->var_name == var) {
+        /* B is x^n, A is something else: swap */
+        A = e->right; B = e->left;
+    }
+
+    /* Check if A is polynomial in var: x, x^2, x^3, ... */
+    int poly_deg = -1;
+    if (A->type == EC_VAR && A->var_name == var && !A->var_str)
+        poly_deg = 1;
+    else if (A->type == EC_POW &&
+             A->left && A->left->type == EC_VAR && A->left->var_name == var &&
+             A->right && A->right->type == EC_NUM && A->right->num_val >= 0 &&
+             !A->left->var_str)
+        poly_deg = (int)(A->right->num_val + 0.5);
+    else if (A->type == EC_NUM)
+        poly_deg = 0; /* constant factor: ∫c·f(x)dx = c·∫f(x)dx */
+
+    if (poly_deg < 0) return NULL; /* no polynomial factor */
+
+    /* u = polynomial, dv = B dx */
+    Expr *u, *du, *v;
+    if (poly_deg == 0) {
+        /* ∫c·B = c·∫B, already handled by linearity */
+        return NULL;
+    } else {
+        /* u = A, dv = B dx → du = A' dx, v = ∫B dx */
+        u = ec_copy(A);
+        du = ec_diff(ec_copy(A), var);
+        Expr *IB = integ_rec(B, var);
+        if (!IB) { ec_free_expr(u); ec_free_expr(du); return NULL; }
+        v = IB;
+    }
+
+    /* ∫A·B = u·v - ∫v·du */
+    Expr *uv = ec_binary(EC_MUL, u, v);
+    Expr *ivdu = integ_rec(ec_binary(EC_MUL, v, du), var);
+    Expr *result;
+    if (ivdu) {
+        result = ec_binary(EC_SUB, uv, ivdu);
+    } else {
+        /* ∫v·du also unresolved — just return u·v as partial */
+        result = uv;
+        ec_free_expr(ivdu);
+    }
+    ec_free_expr(v);
+    ec_free_expr(du);
+    return ec_simplify(result);
+}
+
+/*============================================================
+ * Rational function antiderivatives
+ *============================================================*/
+static Expr* try_rational_antideriv(const Expr *e, char var) {
+    /* Detect 1/(x^2+1) → atan(x) */
+    if (e->type == EC_DIV) {
+        const Expr *num = e->left;
+        const Expr *den = e->right;
+        /* Pattern: 1/(x^2+1) */
+        if (num && den &&
+            num->type == EC_NUM && num->num_val == 1.0 &&
+            den->type == EC_ADD) {
+            const Expr *term1 = den->left;
+            const Expr *term2 = den->right;
+            if (term1 && term1->type == EC_POW &&
+                term1->left && term1->left->type == EC_VAR && term1->left->var_name == var &&
+                term1->right && term1->right->type == EC_NUM && term1->right->num_val == 2.0 &&
+                term2 && term2->type == EC_NUM && term2->num_val == 1.0) {
+                return ec_unary(EC_ATAN, ec_varc(var));
+            }
+        }
+        /* Pattern: 1/x */
+        if (num && den &&
+            num->type == EC_NUM && num->num_val == 1.0 &&
+            den->type == EC_VAR && den->var_name == var) {
+            return ec_unary(EC_LN, ec_unary(EC_ABS, ec_varc(var)));
+        }
+    }
+    return NULL;
+}
+
+/*============================================================
  * Internal recursive integrator
  *============================================================*/
 static Expr* integ_rec(const Expr *e, char var) {
     if (!e) return NULL;
+
+    /* Unwrap EC_INT wrapper (from \int parsed input) */
+    if (e->type == EC_INT)
+        return integ_rec(e->arg, e->deriv_var ? e->deriv_var : var);
+
     switch (e->type) {
         /*---- Constants ----*/
         case EC_NUM:
@@ -90,10 +197,18 @@ static Expr* integ_rec(const Expr *e, char var) {
             return ec_unary(EC_NEG, integ_rec(e->arg, var));
 
         case EC_POW: {
+            /* Extract numeric exponent, handling EC_NEG(EC_NUM) too */
+            double n = 0.0;
+            int have_num = 0;
+            if (e->right && e->right->type == EC_NUM) {
+                n = e->right->num_val; have_num = 1;
+            } else if (e->right && e->right->type == EC_NEG &&
+                       e->right->arg && e->right->arg->type == EC_NUM) {
+                n = -e->right->arg->num_val; have_num = 1;
+            }
             /* Power rule: x^n, n != -1 */
             if (e->left && e->left->type == EC_VAR && e->left->var_name == var) {
-                if (e->right && e->right->type == EC_NUM) {
-                    double n = e->right->num_val;
+                if (have_num) {
                     if (n == -1) {
                         return ec_unary(EC_LN, ec_unary(EC_ABS, ec_varc(var)));
                     }
@@ -106,8 +221,7 @@ static Expr* integ_rec(const Expr *e, char var) {
                 }
             }
             /* Composite base: (ax+b)^n */
-            if (e->right && e->right->type == EC_NUM) {
-                double n = e->right->num_val;
+            if (have_num) {
                 if (n == -1) {
                     return ec_unary(EC_LN, ec_unary(EC_ABS, ec_copy(e->left)));
                 }
@@ -249,16 +363,92 @@ static Expr* integ_rec(const Expr *e, char var) {
 
         /*---- Hyperbolic ----*/
         case EC_SINH:
-            if (expr_is_simple_var(e->arg, var))
+            if (expr_var_matches(e->arg, var))
                 return ec_unary(EC_COSH, ec_varc(var));
             break;
         case EC_COSH:
-            if (expr_is_simple_var(e->arg, var))
+            if (expr_var_matches(e->arg, var))
                 return ec_unary(EC_SINH, ec_varc(var));
             break;
         case EC_TANH:
-            if (expr_is_simple_var(e->arg, var))
+            if (expr_var_matches(e->arg, var))
                 return ec_unary(EC_LN, ec_unary(EC_COSH, ec_varc(var)));
+            break;
+
+        /*---- Products: integration by parts ----*/
+        case EC_MUL: {
+            Expr *r = integ_by_parts(e, var);
+            if (r) return r;
+            break;
+        }
+
+        /*---- Rational functions: arctan, 1/x ----*/
+        case EC_DIV: {
+            /* Pattern: 1/x → ln|x| (var_str may be set when parsed via \int mode) */
+            if (e->left && e->right &&
+                e->left->type == EC_NUM && fabs(e->left->num_val - 1.0) < 1e-14 &&
+                e->right->type == EC_VAR && e->right->var_name == var) {
+                return ec_unary(EC_LN, ec_unary(EC_ABS, ec_varc(var)));
+            }
+            /* Pattern: 1/(x^2+1) → atan(x) */
+            Expr *r = try_rational_antideriv(e, var);
+            if (r) return ec_simplify(r);
+            /* Don't fall through to broken formula: give up */
+            return NULL;
+        }
+
+        /*---- More hyperbolic ----*/
+        case EC_COTH:
+            if (expr_var_matches(e->arg, var)) {
+                return ec_unary(EC_LN, ec_unary(EC_SINH, ec_varc(var)));
+            }
+            break;
+        case EC_SECH:
+            if (expr_var_matches(e->arg, var)) {
+                Expr *half = ec_binary(EC_DIV, ec_varc(var), ec_num(2));
+                Expr *tanh_half = ec_unary(EC_TANH, half);
+                Expr *result = ec_binary(EC_MUL, ec_num(2), ec_unary(EC_ATAN, tanh_half));
+                ec_free_expr(half);
+                return result;
+            }
+            break;
+        case EC_CSCH:
+            if (expr_var_matches(e->arg, var)) {
+                Expr *half = ec_binary(EC_DIV, ec_varc(var), ec_num(2));
+                Expr *tanh_half = ec_unary(EC_TANH, half);
+                Expr *result = ec_unary(EC_LN, ec_unary(EC_ABS, tanh_half));
+                ec_free_expr(half);
+                return result;
+            }
+            break;
+
+        /*---- Inverse hyperbolic ----*/
+        case EC_ACOTH:
+            if (expr_is_simple_var(e->arg, var)) {
+                Expr *x_acoth = ec_binary(EC_MUL, ec_varc(var), ec_unary(EC_ACOTH, ec_varc(var)));
+                Expr *ln1 = ec_unary(EC_LN, ec_unary(EC_ABS, ec_binary(EC_SUB, ec_varc(var), ec_num(1))));
+                Expr *ln2 = ec_unary(EC_LN, ec_unary(EC_ABS, ec_binary(EC_ADD, ec_varc(var), ec_num(1))));
+                Expr *term = ec_binary(EC_MUL, ec_num(0.5), ec_binary(EC_SUB, ln1, ln2));
+                return ec_binary(EC_ADD, x_acoth, term);
+            }
+            break;
+        case EC_ASECH:
+            if (expr_is_simple_var(e->arg, var)) {
+                Expr *x_asech = ec_binary(EC_MUL, ec_varc(var), ec_unary(EC_ASECH, ec_varc(var)));
+                Expr *sqrt_term = ec_unary(EC_SQRT, ec_binary(EC_SUB, ec_num(1), ec_varc(var)));
+                Expr *result = ec_binary(EC_ADD, x_asech, ec_binary(EC_MUL, ec_num(2), sqrt_term));
+                return result;
+            }
+            break;
+        case EC_ACSCH:
+            if (expr_is_simple_var(e->arg, var)) {
+                Expr *x_acsch = ec_binary(EC_MUL, ec_varc(var), ec_unary(EC_ACSCH, ec_varc(var)));
+                Expr *sq = ec_binary(EC_POW, ec_varc(var), ec_num(2));
+                Expr *sqrt_term = ec_unary(EC_SQRT, ec_binary(EC_ADD, sq, ec_num(1)));
+                Expr *ln_term = ec_unary(EC_LN, ec_binary(EC_ADD, ec_varc(var), sqrt_term));
+                ec_free_expr(sq); ec_free_expr(sqrt_term);
+                return ec_binary(EC_ADD, x_acsch, ln_term);
+            }
             break;
 
         default:

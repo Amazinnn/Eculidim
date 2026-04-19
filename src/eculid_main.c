@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <math.h>
 #include <float.h>
+#include <ctype.h>
+#include <strings.h>
 
 /*============================================================
  * JSON / Text dual output mode
@@ -184,34 +186,91 @@ static void handle_normal(EculidSession *s, const char *input, REPLMode mode) {
 }
 
 static void handle_diff(EculidSession *s, const char *input) {
-    (void)s;
     Expr *e = ec_parse(input);
     if (ec_parse_error()) {
         set_error_code("EC001");
         output_result(NULL, "EC001", ec_parse_error_msg());
         ec_free_expr(e); return;
     }
-    Expr *wrapped = ec_diff_with_latex(e, 'x');
-    char *latex = ec_to_latex(wrapped);
-    output_result(latex, NULL, NULL);
-    ec_free_expr(wrapped->arg); ec_free(wrapped);
-    ec_free_expr(e); ec_free(latex);
+    if (s->steps_enabled && g_json_mode) {
+        Derivation *d = ec_diff_with_steps(e, 'x');
+        ECJSONOutput *o = ec_json_new();
+        if (d && d->count > 0)
+            ec_json_set_result(o, d->steps[d->count - 1].step_latex);
+        for (int i = 0; d && i < d->count; i++)
+            ec_json_add_step(o, d->steps[i].step_latex, d->steps[i].rule);
+        char *json = ec_json_render(o);
+        printf("%s\n", json);
+        ec_free(json); ec_json_free(o);
+        if (d) ec_derivation_free(d);
+    } else {
+        Expr *wrapped = ec_diff_with_latex(e, 'x');
+        char *latex = ec_to_latex(wrapped);
+        output_result(latex, NULL, NULL);
+        ec_free_expr(wrapped->arg); ec_free(wrapped);
+        ec_free(latex);
+    }
+    ec_free_expr(e);
 }
 
 static void handle_integrate(EculidSession *s, const char *input) {
-    (void)s;
     Expr *e = ec_parse(input);
     if (ec_parse_error()) {
         set_error_code("EC001");
         output_result(NULL, "EC001", ec_parse_error_msg());
         ec_free_expr(e); return;
     }
-    Expr *F = ec_integrate(e, 'x');
-    char *latex = ec_to_latex(F);
-    char full[8192];
-    snprintf(full, sizeof(full), "%s + C", latex);
-    output_result(full, NULL, NULL);
-    ec_free_expr(e); ec_free_expr(F); ec_free(latex);
+    /* Check for definite integral: EC_INT with left/right bounds */
+    if (e->type == EC_INT && e->left && e->right) {
+        Expr *integrand = e->arg;
+        char var = e->deriv_var ? e->deriv_var : 'x';
+        ECValue va = ec_eval(e->left, NULL);
+        ECValue vb = ec_eval(e->right, NULL);
+        double a = ec_value_as_real(&va);
+        double b = ec_value_as_real(&vb);
+        ec_value_free(&va); ec_value_free(&vb);
+        if (!isnan(a) && !isnan(b)) {
+            char buf[256];
+            double val = ec_numerical_integral(integrand, var, a, b, "adaptive_simpson");
+            if (g_json_mode) {
+                ECJSONOutput *o = ec_json_new();
+                snprintf(buf, sizeof(buf), "%.10g", val);
+                ec_json_set_result(o, buf);
+                snprintf(buf, sizeof(buf), "\\int_{%.10g}^{%.10g} ", a, b);
+                ec_json_add_step(o, buf, "Definite Integral (numerical)");
+                char *json = ec_json_render(o);
+                printf("%s\n", json);
+                ec_free(json); ec_json_free(o);
+            } else {
+                snprintf(buf, sizeof(buf), "%.10g", val);
+                output_result(buf, NULL, NULL);
+            }
+        } else {
+            output_result(NULL, "EC008", "could not evaluate integral bounds to numbers");
+        }
+        ec_free_expr(e); return;
+    }
+    /* Symbolic indefinite integral */
+    if (s->steps_enabled && g_json_mode) {
+        Derivation *d = ec_integrate_with_steps(e, 'x');
+        ECJSONOutput *o = ec_json_new();
+        if (d && d->count > 0)
+            ec_json_set_result(o, d->steps[d->count - 1].step_latex);
+        for (int i = 0; d && i < d->count; i++)
+            ec_json_add_step(o, d->steps[i].step_latex, d->steps[i].rule);
+        char *json = ec_json_render(o);
+        printf("%s\n", json);
+        ec_free(json); ec_json_free(o);
+        if (d) ec_derivation_free(d);
+    } else {
+        Expr *F = ec_integrate(e, 'x');
+        char *latex = ec_to_latex(F);
+        char full[8192];
+        snprintf(full, sizeof(full), "%s + C", latex);
+        output_result(full, NULL, NULL);
+        ec_free(latex); ec_free_expr(F);
+    }
+    ec_free_expr(e);
 }
 
 static void handle_solve(EculidSession *s, const char *input) {
@@ -220,6 +279,37 @@ static void handle_solve(EculidSession *s, const char *input) {
     if (ec_parse_error()) {
         set_error_code("EC001");
         output_result(NULL, "EC001", ec_parse_error_msg());
+        ec_free_expr(e); return;
+    }
+    /* Route by relation node type */
+    if (e->type == EC_LT || e->type == EC_LE || e->type == EC_GT || e->type == EC_GE) {
+        int count = 0;
+        ECInterval *iv = ec_solve_inequality(e, "x", &count);
+        if (g_json_mode) {
+            printf("{\n  \"result\": {\"intervals\": %d}, \"steps\": null, \"error\": null\n}\n", count);
+        } else {
+            if (count == 0) {
+                printf("无解\n");
+            } else {
+                printf("解区间: ");
+                for (int i = 0; i < count; i++) {
+                    char *lo_s = ec_to_latex(iv[i].lo);
+                    char *hi_s = ec_to_latex(iv[i].hi);
+                    int inc = iv[i].inclusive;
+                    const char *lop = inc ? "[" : "(";
+                    const char *hip = inc ? "]" : ")";
+                    if (strcmp(hi_s, "\\infty") == 0)
+                        printf("%s%s, \\infty%s", i > 0 ? " ∪ " : "", lo_s, hip);
+                    else if (strcmp(lo_s, "-\\infty") == 0 || strcmp(lo_s, "\\infty") == 0)
+                        printf("%s, %s%s", lo_s, hi_s, hip);
+                    else
+                        printf("%s%s%s, %s%s", i > 0 ? " ∪ " : "", lop, lo_s, hi_s, hip);
+                    ec_free(lo_s); ec_free(hi_s);
+                }
+                printf("\n");
+            }
+        }
+        ec_interval_free(iv, count);
         ec_free_expr(e); return;
     }
     EculidRoots r = ec_solve(e, "x");
@@ -249,13 +339,50 @@ static void handle_series(EculidSession *s, const char *input) {
 
 static void handle_sum(EculidSession *s, const char *input) {
     (void)s;
-    Expr *e = ec_parse(input);
-    if (ec_parse_error()) {
-        set_error_code("EC001");
-        output_result(NULL, "EC001", ec_parse_error_msg());
-        ec_free_expr(e); return;
+    if (!input || !*input) {
+        output_result(NULL, "EC007", "\\sum 语法: \\sum n=m..k expr  (如 \\sum n=1..10 n^2)");
+        return;
     }
-    Expr *result = ec_sum(ec_copy(e), "n", ec_num(1), ec_num(10));
+    /* Try to parse explicit bounds: "n=1..10 n^2" */
+    char var = 'n';
+    int lo = 1, hi = 10;
+    const char *expr_str = input;
+    const char *eq = strchr(input, '=');
+    const char *dots = strstr(input, "..");
+    if (eq && dots && eq < dots) {
+        /* Extract variable: "n" from "n=1..10 n^2" */
+        while (*input == ' ') input++;
+        if (isalpha((unsigned char)*input)) {
+            var = *input;
+            /* Find lo: after '=', before ".." */
+            const char *p = eq + 1;
+            while (*p == ' ') p++;
+            lo = atoi(p);
+            /* Find hi: after "..", before space or end */
+            const char *h = dots + 2;
+            while (*h == ' ') h++;
+            const char *hend = h;
+            while (*hend && *hend != ' ' && *hend != '\r' && *hend != '\n') hend++;
+            char tmp[32];
+            int len = hend - h < 31 ? hend - h : 31;
+            strncpy(tmp, h, len);
+            tmp[len] = 0;
+            hi = atoi(tmp);
+            expr_str = hend;
+            while (*expr_str == ' ') expr_str++;
+        }
+    }
+    if (!expr_str || !*expr_str) {
+        output_result(NULL, "EC007", "\\sum 缺少表达式 (如 \\sum n=1..10 n^2)");
+        return;
+    }
+    Expr *e = ec_parse(expr_str);
+    if (ec_parse_error()) {
+        output_result(NULL, "EC001", ec_parse_error_msg());
+        return;
+    }
+    char var_str[2] = {var, 0};
+    Expr *result = ec_sum(ec_copy(e), var_str, ec_num(lo), ec_num(hi));
     char *l = ec_to_latex(result);
     output_result(l, NULL, NULL);
     ec_free_expr(e); ec_free_expr(result); ec_free(l);
@@ -263,13 +390,52 @@ static void handle_sum(EculidSession *s, const char *input) {
 
 static void handle_limit(EculidSession *s, const char *input) {
     (void)s;
-    Expr *e = ec_parse(input);
-    if (ec_parse_error()) {
-        set_error_code("EC001");
-        output_result(NULL, "EC001", ec_parse_error_msg());
-        ec_free_expr(e); return;
+    if (!input || !*input) {
+        output_result(NULL, "EC007", "\\limit 语法: \\limit x->a expr  (如 \\limit x->0 sin(x)/x)");
+        return;
     }
-    Expr *L = ec_limit(e, 'x', ec_num(0), EC_LIMIT_BOTH);
+    /* Try to parse "var->point expr" */
+    char var = 'x';
+    Expr *point = ec_num(0);
+    const char *expr_str = input;
+    const char *arrow = strstr(input, "->");
+    if (arrow && arrow > input && isalpha((unsigned char)arrow[-1])) {
+        var = arrow[-1];
+        const char *pt_start = arrow + 2;
+        while (*pt_start == ' ') pt_start++;
+        /* Point expression ends at first whitespace or end of string */
+        const char *pt_end = pt_start;
+        while (*pt_end && *pt_end != ' ' && *pt_end != '\t' && *pt_end != '\r' && *pt_end != '\n')
+            pt_end++;
+        /* Extract point substring */
+        size_t pt_len = pt_end - pt_start;
+        if (pt_len > 0) {
+            char *pt_buf = ec_malloc(pt_len + 1);
+            strncpy(pt_buf, pt_start, pt_len);
+            pt_buf[pt_len] = 0;
+            Expr *parsed_pt = ec_parse(pt_buf);
+            if (parsed_pt && !ec_parse_error()) {
+                Expr *simp = ec_simplify(parsed_pt);
+                ec_free_expr(point);
+                point = simp;
+                expr_str = pt_end;
+                while (*expr_str == ' ') expr_str++;
+            } else {
+                ec_free_expr(parsed_pt);
+            }
+            ec_free(pt_buf);
+        }
+    }
+    if (!expr_str || !*expr_str) {
+        output_result(NULL, "EC007", "\\limit 缺少表达式");
+        ec_free_expr(point); return;
+    }
+    Expr *e = ec_parse(expr_str);
+    if (ec_parse_error()) {
+        output_result(NULL, "EC001", ec_parse_error_msg());
+        ec_free_expr(point); return;
+    }
+    Expr *L = ec_limit(e, var, point, EC_LIMIT_BOTH);
     char *l = L ? ec_to_latex(L) : ec_strdup("不存在");
     if (g_json_mode) {
         if (L) output_result(l, NULL, NULL);
@@ -329,6 +495,22 @@ static void repl_loop(void) {
 
         if (is_cmd(line, "\\quit") || is_cmd(line, "\\exit") || strcmp(line, "exit") == 0) break;
         if (is_cmd(line, "\\help")) { print_help(); continue; }
+        /* Combined-mode: \cmd expr (e.g. \int 1/x, \diff x^2, \int_0^1 x^2) */
+        if (strncmp(line, "\\diff ", 6) == 0) { handle_diff(s, line + 6); continue; }
+        if (strncmp(line, "\\int ", 5) == 0) { handle_integrate(s, line + 5); continue; }
+        if (strncmp(line, "\\int", 4) == 0 && (line[4] == '_' || line[4] == '{')) {
+            /* Definite integral shorthand: \int_0^1 x^2 — pass full expr to parser */
+            handle_integrate(s, line); continue;
+        }
+        if (strncmp(line, "\\solve ", 7) == 0) { handle_solve(s, line + 7); continue; }
+        if (strncmp(line, "\\series ", 8) == 0) { handle_series(s, line + 8); continue; }
+        if (strncmp(line, "\\sum ", 5) == 0) { handle_sum(s, line + 5); continue; }
+        if (strncmp(line, "\\limit ", 7) == 0) { handle_limit(s, line + 7); continue; }
+        if (strncmp(line, "\\normal ", 8) == 0 || strncmp(line, "\\eval ", 6) == 0) {
+            const char *p = strchr(line, ' ');
+            handle_normal(s, p ? p + 1 : line, MODE_NORMAL); continue;
+        }
+        /* Pure mode-switch commands (no expression) */
         if (is_cmd(line, "\\diff")) { mode = MODE_DIFF; continue; }
         if (is_cmd(line, "\\int")) { mode = MODE_INTEGRATE; continue; }
         if (is_cmd(line, "\\solve")) { mode = MODE_SOLVE; continue; }
