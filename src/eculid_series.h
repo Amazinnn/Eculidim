@@ -10,6 +10,7 @@ Expr* ec_series(Expr *e, const char *var, const Expr *point,
                  int order, ECSeriesType type);
 Expr* ec_taylor(Expr *e, const char *var, const Expr *a, int n);
 Expr* ec_maclaurin(Expr *e, const char *var, int n);
+Expr* ec_series_integral(Expr *e, const char *var, int order);
 Expr* ec_series_revert(Expr *s, const char *var, int n);
 Derivation* ec_series_with_steps(Expr *e, const char *var,
                                    const Expr *a, int n);

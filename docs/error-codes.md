@@ -42,7 +42,7 @@ Error EC001: Parse error at position 5: unexpected token ')'
 | EC009 | `EC_ERR_IO` | 文件 I/O 错误 | 状态文件不可写、无权限 | 检查工作目录写权限，或指定可写路径 |
 | EC010 | `EC_ERR_NO_STEPS` | 推导步骤不可用 | 当前表达式无法生成步骤 | 可继续使用，结果仍然正确，只是无分步推导 |
 | EC011 | `EC_ERR_NO_CONV` | 级数收敛失败 | `\sum_{n=1}^{\\infty} 1/n` | 检查级数是否收敛，或限制展开阶数 |
-| EC012 | `EC_ERR_BAD_ARG` | 参数错误 | `series x at x=inf order -1` | 检查参数范围：展开阶数须为正整数 |
+| EC013 | `EC_ERR_INT_LOOP` | 分部积分迭代超限 | Tabular method exceeded 20 iterations | Reduce polynomial degree, or the function may not have a closed-form antiderivative |
 
 ---
 

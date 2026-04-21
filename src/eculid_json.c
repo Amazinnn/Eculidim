@@ -99,8 +99,9 @@ static const char* ec_error_code_str(ECErrorCode code) {
         [EC_ERR_NO_STEPS]  = "EC010",
         [EC_ERR_NO_CONV]   = "EC011",
         [EC_ERR_BAD_ARG]   = "EC012",
+        [EC_ERR_INT_LOOP]  = "EC013",
     };
-    if (code >= 0 && code <= EC_ERR_BAD_ARG) return names[code];
+    if (code >= 0 && code <= EC_ERR_INT_LOOP) return names[code];
     return "EC000";
 }
 

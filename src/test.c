@@ -20,6 +20,7 @@ static int pass = 0, fail = 0;
 
 #ifdef TEST
 int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
     printf("=== Eculidim 测试套件 ===\n\n");
 
     /* 词法分析 */
@@ -239,6 +240,74 @@ int main(void) {
         Expr *s = ec_sum(ec_copy(e), "n", ec_num(1), ec_num(10));
         CK("sum n^2 from 1 to 10", s != NULL);
         ec_free_expr(e); ec_free_expr(s);
+    }
+
+    /* ---- 积分回归（复杂函数） ---- */
+    {
+        Expr *e = ec_parse("\\sin(x)^2");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ sin^2(x)", latex && strstr(latex, "x") != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        Expr *e = ec_parse("\\sin(x)^3");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ sin^3(x)", latex != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        printf("DBG: case e^x*sin start\n");
+        Expr *e = ec_parse("{e}^x*\\sin(x)");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ e^x*sin(x)", latex && strstr(latex, "e^") != NULL && strstr(latex, "sin") != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        printf("DBG: case e^x*cos start\n");
+        Expr *e = ec_parse("{e}^x*\\cos(x)");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ e^x*cos(x)", latex && strstr(latex, "e^") != NULL && strstr(latex, "cos") != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        printf("DBG: case x^3*sin start\n");
+        Expr *e = ec_parse("x^3*\\sin(x)");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ x^3*sin(x) tabular", latex && strstr(latex, "sin") != NULL && strstr(latex, "cos") != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        Expr *e = ec_parse("x^2*e^(2*x)");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ x^2*e^(2x)", latex && strstr(latex, "e^") != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        Expr *e = ec_parse("x*\\cos(3*x)");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ x*cos(3x)", latex && strstr(latex, "cos") != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
+    }
+
+    {
+        Expr *e = ec_parse("{e}^{x^2}");
+        Expr *r = ec_integrate(e, 'x');
+        char *latex = r ? ec_to_latex(r) : NULL;
+        CK("integ e^(x^2) series fallback", latex != NULL);
+        ec_free(latex); ec_free_expr(r); ec_free_expr(e);
     }
 
     /* ---- Gamma 函数节点 ---- */

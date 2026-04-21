@@ -109,7 +109,10 @@ static void output_result(const char *latex, const char *error_code_str, const c
     if (g_json_mode) {
         print_json_result(latex, error_code_str, error_msg);
     } else if (error_msg) {
-        print_error_text(error_msg);
+        if (error_code_str)
+            printf("Error %s: %s\n", error_code_str, error_msg);
+        else
+            print_error_text(error_msg);
     } else {
         printf("%s\n", latex);
     }
@@ -264,6 +267,11 @@ static void handle_integrate(EculidSession *s, const char *input) {
         if (d) ec_derivation_free(d);
     } else {
         Expr *F = ec_integrate(e, 'x');
+        if (!F) {
+            output_result(NULL, "EC013", "integration formula and series fallback both failed");
+            ec_free_expr(e);
+            return;
+        }
         char *latex = ec_to_latex(F);
         char full[8192];
         snprintf(full, sizeof(full), "%s + C", latex);

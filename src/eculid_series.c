@@ -119,6 +119,89 @@ Expr* ec_maclaurin(Expr *e, const char *var, int n) {
 }
 
 /*============================================================
+ * Series integral helper (termwise over polynomial-like expansion)
+ *============================================================*/
+static Expr* integrate_series_termwise(const Expr *e, char var) {
+    if (!e) return NULL;
+
+    if (e->type == EC_ADD)
+        return ec_binary(EC_ADD,
+            integrate_series_termwise(e->left, var),
+            integrate_series_termwise(e->right, var));
+
+    if (e->type == EC_SUB)
+        return ec_binary(EC_SUB,
+            integrate_series_termwise(e->left, var),
+            integrate_series_termwise(e->right, var));
+
+    if (e->type == EC_NEG)
+        return ec_unary(EC_NEG, integrate_series_termwise(e->arg, var));
+
+    if (e->type == EC_NUM) {
+        return ec_binary(EC_MUL, ec_copy(e), ec_varc(var));
+    }
+
+    if (e->type == EC_VAR && e->var_name == var) {
+        return ec_binary(EC_DIV,
+            ec_binary(EC_POW, ec_varc(var), ec_num(2)),
+            ec_num(2));
+    }
+
+    if (e->type == EC_POW &&
+        e->left && e->left->type == EC_VAR && e->left->var_name == var &&
+        e->right && e->right->type == EC_NUM) {
+        double n = e->right->num_val;
+        if (fabs(n + 1.0) < 1e-12)
+            return ec_unary(EC_LN, ec_unary(EC_ABS, ec_varc(var)));
+        return ec_binary(EC_MUL,
+            ec_num(1.0 / (n + 1.0)),
+            ec_binary(EC_POW, ec_varc(var), ec_num(n + 1.0)));
+    }
+
+    if (e->type == EC_MUL) {
+        /* c*x^n */
+        const Expr *num = NULL;
+        const Expr *pow = NULL;
+        if (e->left && e->left->type == EC_NUM) { num = e->left; pow = e->right; }
+        else if (e->right && e->right->type == EC_NUM) { num = e->right; pow = e->left; }
+
+        if (num && pow) {
+            if (pow->type == EC_VAR && pow->var_name == var) {
+                return ec_binary(EC_MUL, ec_num(num->num_val / 2.0),
+                    ec_binary(EC_POW, ec_varc(var), ec_num(2)));
+            }
+            if (pow->type == EC_POW &&
+                pow->left && pow->left->type == EC_VAR && pow->left->var_name == var &&
+                pow->right && pow->right->type == EC_NUM) {
+                double n = pow->right->num_val;
+                if (fabs(n + 1.0) < 1e-12)
+                    return ec_binary(EC_MUL, ec_num(num->num_val),
+                        ec_unary(EC_LN, ec_unary(EC_ABS, ec_varc(var))));
+                return ec_binary(EC_MUL,
+                    ec_num(num->num_val / (n + 1.0)),
+                    ec_binary(EC_POW, ec_varc(var), ec_num(n + 1.0)));
+            }
+        }
+    }
+
+    /* Unknown term: keep as formal integral wrapper */
+    return ec_intg(ec_copy(e), var);
+}
+
+/*============================================================
+ * Taylor-series termwise integration fallback
+ *============================================================*/
+Expr* ec_series_integral(Expr *e, const char *var, int order) {
+    if (!e || !var || order <= 0) return NULL;
+    Expr *series = ec_maclaurin(e, var, order);
+    if (!series) return NULL;
+    Expr *integrated = integrate_series_termwise(series, var[0]);
+    ec_free_expr(series);
+    if (!integrated) return NULL;
+    return ec_simplify(integrated);
+}
+
+/*============================================================
  * ec_series_revert — inverse series expansion
  *   Given y = sum c_k * (x-a)^k, find x as a series in y
  *   Not implemented: return NULL

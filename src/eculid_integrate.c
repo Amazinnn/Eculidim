@@ -1,4 +1,5 @@
 #include "eculid.h"
+#include "eculid_series.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,11 @@ static int expr_var_matches(const Expr *e, char var) {
 
 static int node_has_integral(const Expr *e, char var);
 static Expr* integ_rec(const Expr *e, char var);
+static Expr* integ_trig_power(const Expr *e, char var);
+static Expr* integ_exp_trig(const Expr *e, char var);
+static Expr* integ_tabular(const Expr *e, char var);
+
+static int integ_tabular_hit_limit = 0;
 
 static int sub_has_integral(const Expr *e, char var) {
     return node_has_integral(e, var);
@@ -70,25 +76,18 @@ int ec_has_integral(Expr *e, char var) {
  * Integration by parts helpers
  *============================================================*/
 static Expr* integ_by_parts(const Expr *e, char var) {
-    /* ∫u·dv = u·v - ∫v·du
-     * Strategy: u = polynomial part, dv = the rest.
-     * Returns NULL if no pattern matches.
-     */
     if (e->type != EC_MUL) return NULL;
 
     const Expr *A = e->left;
     const Expr *B = e->right;
     if (!A || !B) return NULL;
 
-    /* Normalize: ensure A is the polynomial */
     if (B->type == EC_POW &&
         B->right && B->right->type == EC_NUM && B->right->num_val >= 0 &&
         B->left && B->left->type == EC_VAR && B->left->var_name == var) {
-        /* B is x^n, A is something else: swap */
         A = e->right; B = e->left;
     }
 
-    /* Check if A is polynomial in var: x, x^2, x^3, ... */
     int poly_deg = -1;
     if (A->type == EC_VAR && A->var_name == var && !A->var_str)
         poly_deg = 1;
@@ -98,37 +97,38 @@ static Expr* integ_by_parts(const Expr *e, char var) {
              !A->left->var_str)
         poly_deg = (int)(A->right->num_val + 0.5);
     else if (A->type == EC_NUM)
-        poly_deg = 0; /* constant factor: ∫c·f(x)dx = c·∫f(x)dx */
+        poly_deg = 0;
 
-    if (poly_deg < 0) return NULL; /* no polynomial factor */
+    if (poly_deg < 0) return NULL;
 
-    /* u = polynomial, dv = B dx */
     Expr *u, *du, *v;
     if (poly_deg == 0) {
-        /* ∫c·B = c·∫B, already handled by linearity */
         return NULL;
     } else {
-        /* u = A, dv = B dx → du = A' dx, v = ∫B dx */
         u = ec_copy(A);
         du = ec_diff(ec_copy(A), var);
         Expr *IB = integ_rec(B, var);
-        if (!IB) { ec_free_expr(u); ec_free_expr(du); return NULL; }
+        if (!IB || IB->type == EC_INT) {
+            ec_free_expr(u);
+            ec_free_expr(du);
+            ec_free_expr(IB);
+            return NULL;
+        }
         v = IB;
     }
 
-    /* ∫A·B = u·v - ∫v·du */
-    Expr *uv = ec_binary(EC_MUL, u, v);
-    Expr *ivdu = integ_rec(ec_binary(EC_MUL, v, du), var);
+    Expr *uv = ec_binary(EC_MUL, u, ec_copy(v));
+    Expr *ivdu = integ_rec(ec_binary(EC_MUL, ec_copy(v), du), var);
     Expr *result;
-    if (ivdu) {
+    if (ivdu && ivdu->type != EC_INT) {
         result = ec_binary(EC_SUB, uv, ivdu);
     } else {
-        /* ∫v·du also unresolved — just return u·v as partial */
-        result = uv;
         ec_free_expr(ivdu);
+        ec_free_expr(uv);
+        ec_free_expr(v);
+        return NULL;
     }
     ec_free_expr(v);
-    ec_free_expr(du);
     return ec_simplify(result);
 }
 
@@ -136,11 +136,9 @@ static Expr* integ_by_parts(const Expr *e, char var) {
  * Rational function antiderivatives
  *============================================================*/
 static Expr* try_rational_antideriv(const Expr *e, char var) {
-    /* Detect 1/(x^2+1) → atan(x) */
     if (e->type == EC_DIV) {
         const Expr *num = e->left;
         const Expr *den = e->right;
-        /* Pattern: 1/(x^2+1) */
         if (num && den &&
             num->type == EC_NUM && num->num_val == 1.0 &&
             den->type == EC_ADD) {
@@ -153,7 +151,6 @@ static Expr* try_rational_antideriv(const Expr *e, char var) {
                 return ec_unary(EC_ATAN, ec_varc(var));
             }
         }
-        /* Pattern: 1/x */
         if (num && den &&
             num->type == EC_NUM && num->num_val == 1.0 &&
             den->type == EC_VAR && den->var_name == var) {
@@ -164,17 +161,225 @@ static Expr* try_rational_antideriv(const Expr *e, char var) {
 }
 
 /*============================================================
+ * Trigonometric power-reduction formulas
+ *============================================================*/
+static Expr* integ_trig_power(const Expr *e, char var) {
+    if (!e || e->type != EC_POW) return NULL;
+    const Expr *base = e->left;
+    const Expr *exp_node = e->right;
+    if (!base || !exp_node || exp_node->type != EC_NUM) return NULL;
+    if ((base->type != EC_SIN && base->type != EC_COS) || !base->arg) return NULL;
+    if (!expr_is_simple_var(base->arg, var)) return NULL;
+    double n = exp_node->num_val;
+    if (n < 2.0) return NULL;
+
+    if (base->type == EC_SIN) {
+        if (fabs(n - 2.0) < 1e-12) {
+            Expr *term1 = ec_binary(EC_DIV, ec_varc(var), ec_num(2));
+            Expr *two_x = ec_binary(EC_MUL, ec_num(2), ec_varc(var));
+            Expr *sin_2x = ec_unary(EC_SIN, two_x);
+            Expr *term2 = ec_binary(EC_DIV, sin_2x, ec_num(4));
+            return ec_simplify(ec_binary(EC_SUB, term1, term2));
+        }
+        Expr *sn_1 = ec_binary(EC_POW, ec_unary(EC_SIN, ec_varc(var)), ec_num(n - 1));
+        Expr *cos_x = ec_unary(EC_COS, ec_varc(var));
+        Expr *term1 = ec_binary(EC_DIV, ec_binary(EC_MUL, ec_unary(EC_NEG, sn_1), cos_x), ec_num(n));
+
+        Expr *next = ec_binary(EC_POW, ec_unary(EC_SIN, ec_varc(var)), ec_num(n - 2));
+        Expr *r2 = integ_trig_power(next, var);
+        if (!r2) r2 = integ_rec(next, var);
+        Expr *term2 = ec_binary(EC_MUL, ec_num((n - 1.0) / n), r2);
+        return ec_simplify(ec_binary(EC_ADD, term1, term2));
+    }
+
+    if (base->type == EC_COS) {
+        if (fabs(n - 2.0) < 1e-12) {
+            Expr *term1 = ec_binary(EC_DIV, ec_varc(var), ec_num(2));
+            Expr *two_x = ec_binary(EC_MUL, ec_num(2), ec_varc(var));
+            Expr *sin_2x = ec_unary(EC_SIN, two_x);
+            Expr *term2 = ec_binary(EC_DIV, sin_2x, ec_num(4));
+            return ec_simplify(ec_binary(EC_ADD, term1, term2));
+        }
+        Expr *cn_1 = ec_binary(EC_POW, ec_unary(EC_COS, ec_varc(var)), ec_num(n - 1));
+        Expr *sin_x = ec_unary(EC_SIN, ec_varc(var));
+        Expr *term1 = ec_binary(EC_DIV, ec_binary(EC_MUL, cn_1, sin_x), ec_num(n));
+
+        Expr *next = ec_binary(EC_POW, ec_unary(EC_COS, ec_varc(var)), ec_num(n - 2));
+        Expr *r2 = integ_trig_power(next, var);
+        if (!r2) r2 = integ_rec(next, var);
+        Expr *term2 = ec_binary(EC_MUL, ec_num((n - 1.0) / n), r2);
+        return ec_simplify(ec_binary(EC_ADD, term1, term2));
+    }
+
+    return NULL;
+}
+
+static int is_var_mul_num(const Expr *arg, char var, double *k) {
+    if (!arg) return 0;
+    if (arg->type == EC_VAR && arg->var_name == var) {
+        *k = 1.0;
+        return 1;
+    }
+    if (arg->type == EC_MUL && arg->left && arg->right) {
+        if (arg->left->type == EC_NUM && arg->right->type == EC_VAR && arg->right->var_name == var) {
+            *k = arg->left->num_val;
+            return 1;
+        }
+        if (arg->right->type == EC_NUM && arg->left->type == EC_VAR && arg->left->var_name == var) {
+            *k = arg->right->num_val;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int is_e_pow_ax(const Expr *node, char var, double *a) {
+    if (!node || node->type != EC_POW || !node->left || !node->right) return 0;
+    if (node->left->type != EC_E) return 0;
+    return is_var_mul_num(node->right, var, a);
+}
+
+/* Detect and integrate e^(ax) * sin(bx) / cos(bx) */
+static Expr* integ_exp_trig(const Expr *e, char var) {
+    if (!e || e->type != EC_MUL) return NULL;
+    const Expr *A = e->left;
+    const Expr *B = e->right;
+    if (!A || !B) return NULL;
+
+    const Expr *exp_part = NULL;
+    const Expr *trig_part = NULL;
+    double dummy = 0.0;
+
+    int a_is_exp = is_e_pow_ax(A, var, &dummy);
+    int b_is_exp = is_e_pow_ax(B, var, &dummy);
+
+    if (a_is_exp && (B->type == EC_SIN || B->type == EC_COS)) {
+        exp_part = A; trig_part = B;
+    } else if (b_is_exp && (A->type == EC_SIN || A->type == EC_COS)) {
+        exp_part = B; trig_part = A;
+    } else {
+        return NULL;
+    }
+
+    double a = 0.0, b = 0.0;
+    if (!is_e_pow_ax(exp_part, var, &a)) return NULL;
+    if (!trig_part->arg) return NULL;
+    if (!is_var_mul_num(trig_part->arg, var, &b)) return NULL;
+
+    double denom = a * a + b * b;
+    if (fabs(denom) < 1e-15) return NULL;
+
+    Expr *exp_ax = ec_copy(exp_part);
+    Expr *bx = (fabs(b - 1.0) < 1e-12) ? ec_varc(var) : ec_binary(EC_MUL, ec_num(b), ec_varc(var));
+    Expr *sin_bx = ec_unary(EC_SIN, ec_copy(bx));
+    Expr *cos_bx = ec_unary(EC_COS, bx);
+
+    Expr *combo = NULL;
+    if (trig_part->type == EC_SIN) {
+        Expr *a_sin = ec_binary(EC_MUL, ec_num(a), sin_bx);
+        Expr *b_cos = ec_binary(EC_MUL, ec_num(b), cos_bx);
+        combo = ec_binary(EC_SUB, a_sin, b_cos);
+    } else {
+        Expr *a_cos = ec_binary(EC_MUL, ec_num(a), cos_bx);
+        Expr *b_sin = ec_binary(EC_MUL, ec_num(b), sin_bx);
+        combo = ec_binary(EC_ADD, a_cos, b_sin);
+    }
+
+    Expr *num = ec_binary(EC_MUL, exp_ax, combo);
+    return ec_simplify(ec_binary(EC_DIV, num, ec_num(denom)));
+}
+
+static int poly_degree_if_simple(const Expr *p, char var) {
+    if (!p) return -1;
+    if (p->type == EC_VAR && p->var_name == var && !p->var_str) return 1;
+    if (p->type == EC_POW && p->left && p->left->type == EC_VAR && p->left->var_name == var &&
+        p->right && p->right->type == EC_NUM) {
+        double n = p->right->num_val;
+        if (n >= 0 && fabs(n - floor(n + 0.5)) < 1e-9) return (int)(n + 0.5);
+    }
+    if (p->type == EC_NUM) return 0;
+    return -1;
+}
+
+/* Tabular (DI) method for ∫P(x)·T(x)dx where T in {sin(kx), cos(kx), e^(kx)} */
+static Expr* integ_tabular(const Expr *e, char var) {
+    if (!e || e->type != EC_MUL) return NULL;
+    const Expr *A = e->left;
+    const Expr *B = e->right;
+    if (!A || !B) return NULL;
+
+    const Expr *poly = A;
+    const Expr *trans = B;
+    int deg = poly_degree_if_simple(poly, var);
+    if (deg < 1) {
+        poly = B;
+        trans = A;
+        deg = poly_degree_if_simple(poly, var);
+    }
+    if (deg < 1) return NULL;
+
+    if (!(trans->type == EC_SIN || trans->type == EC_COS || trans->type == EC_POW)) return NULL;
+
+    double k = 1.0;
+    if (trans->type == EC_POW) {
+        if (!is_e_pow_ax(trans, var, &k)) return NULL;
+    } else {
+        if (!is_var_mul_num(trans->arg, var, &k)) return NULL;
+    }
+    if (fabs(k) < 1e-15) return NULL;
+
+    const int MAX_ITER = 20;
+    int sign = 1;
+    Expr *result = NULL;
+    Expr *dcur = ec_copy(poly);
+
+    for (int i = 0; i < MAX_ITER; i++) {
+        if (dcur->type == EC_NUM && fabs(dcur->num_val) < 1e-14) break;
+
+        Expr *ik = NULL;
+        Expr *kx = (fabs(k - 1.0) < 1e-12) ? ec_varc(var) : ec_binary(EC_MUL, ec_num(k), ec_varc(var));
+        if (trans->type == EC_POW) {
+            ik = ec_binary(EC_DIV, ec_binary(EC_POW, ec_const(EC_E), ec_copy(kx)), ec_num(pow(k, i + 1)));
+        } else if (trans->type == EC_SIN) {
+            if ((i % 2) == 0) ik = ec_binary(EC_DIV, ec_unary(EC_NEG, ec_unary(EC_COS, ec_copy(kx))), ec_num(pow(k, i + 1)));
+            else ik = ec_binary(EC_DIV, ec_unary(EC_SIN, ec_copy(kx)), ec_num(pow(k, i + 1)));
+        } else {
+            if ((i % 2) == 0) ik = ec_binary(EC_DIV, ec_unary(EC_SIN, ec_copy(kx)), ec_num(pow(k, i + 1)));
+            else ik = ec_binary(EC_DIV, ec_unary(EC_COS, ec_copy(kx)), ec_num(pow(k, i + 1)));
+        }
+        ec_free_expr(kx);
+
+        Expr *term = ec_binary(EC_MUL, ec_copy(dcur), ik);
+        if (sign < 0) term = ec_unary(EC_NEG, term);
+
+        if (!result) result = term;
+        else result = ec_binary(EC_ADD, result, term);
+
+        Expr *next = ec_diff(dcur, var);
+        ec_free_expr(dcur);
+        dcur = next;
+        sign = -sign;
+    }
+
+    if (dcur && !(dcur->type == EC_NUM && fabs(dcur->num_val) < 1e-14)) {
+        integ_tabular_hit_limit = 1;
+    }
+
+    ec_free_expr(dcur);
+    if (!result) return NULL;
+    return ec_simplify(result);
+}
+
+/*============================================================
  * Internal recursive integrator
  *============================================================*/
 static Expr* integ_rec(const Expr *e, char var) {
     if (!e) return NULL;
 
-    /* Unwrap EC_INT wrapper (from \int parsed input) */
     if (e->type == EC_INT)
         return integ_rec(e->arg, e->deriv_var ? e->deriv_var : var);
 
     switch (e->type) {
-        /*---- Constants ----*/
         case EC_NUM:
             return ec_binary(EC_MUL, ec_copy(e), ec_varc(var));
 
@@ -186,7 +391,6 @@ static Expr* integ_rec(const Expr *e, char var) {
         case EC_PI: case EC_E: case EC_I:
             return ec_binary(EC_MUL, ec_copy(e), ec_varc(var));
 
-        /*---- Arithmetic ----*/
         case EC_ADD:
             return ec_binary(EC_ADD, integ_rec(e->left, var), integ_rec(e->right, var));
 
@@ -197,7 +401,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             return ec_unary(EC_NEG, integ_rec(e->arg, var));
 
         case EC_POW: {
-            /* Extract numeric exponent, handling EC_NEG(EC_NUM) too */
             double n = 0.0;
             int have_num = 0;
             if (e->right && e->right->type == EC_NUM) {
@@ -206,7 +409,6 @@ static Expr* integ_rec(const Expr *e, char var) {
                        e->right->arg && e->right->arg->type == EC_NUM) {
                 n = -e->right->arg->num_val; have_num = 1;
             }
-            /* Power rule: x^n, n != -1 */
             if (e->left && e->left->type == EC_VAR && e->left->var_name == var) {
                 if (have_num) {
                     if (n == -1) {
@@ -220,7 +422,10 @@ static Expr* integ_rec(const Expr *e, char var) {
                     return ec_binary(EC_DIV, ec_copy(e), ln_a);
                 }
             }
-            /* Composite base: (ax+b)^n */
+            if (have_num && n >= 2) {
+                Expr *r = integ_trig_power(e, var);
+                if (r) return r;
+            }
             if (have_num) {
                 if (n == -1) {
                     return ec_unary(EC_LN, ec_unary(EC_ABS, ec_copy(e->left)));
@@ -235,7 +440,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             break;
         }
 
-        /*---- Trigonometric ----*/
         case EC_SIN:
             if (expr_is_simple_var(e->arg, var))
                 return ec_unary(EC_NEG, ec_unary(EC_COS, ec_varc(var)));
@@ -275,7 +479,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             }
             break;
 
-        /*---- Exponential ----*/
         case EC_EXP:
             if (expr_is_simple_var(e->arg, var))
                 return ec_copy(e);
@@ -283,7 +486,6 @@ static Expr* integ_rec(const Expr *e, char var) {
               return ec_binary(EC_DIV, ec_copy(e), ec_copy(du)); }
             break;
 
-        /*---- Logarithmic ----*/
         case EC_LN:
             if (expr_is_simple_var(e->arg, var)) {
                 Expr *ln_x = ec_unary(EC_LN, ec_varc(var));
@@ -308,7 +510,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             }
             break;
 
-        /*---- Root functions ----*/
         case EC_SQRT:
             if (expr_is_simple_var(e->arg, var)) {
                 return ec_binary(EC_MUL, ec_num(2.0/3.0),
@@ -327,7 +528,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             }
             break;
 
-        /*---- Inverse trig ----*/
         case EC_ASIN:
             if (expr_is_simple_var(e->arg, var)) {
                 Expr *x_asin = ec_binary(EC_MUL, ec_varc(var),
@@ -361,7 +561,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             }
             break;
 
-        /*---- Hyperbolic ----*/
         case EC_SINH:
             if (expr_var_matches(e->arg, var))
                 return ec_unary(EC_COSH, ec_varc(var));
@@ -375,29 +574,27 @@ static Expr* integ_rec(const Expr *e, char var) {
                 return ec_unary(EC_LN, ec_unary(EC_COSH, ec_varc(var)));
             break;
 
-        /*---- Products: integration by parts ----*/
         case EC_MUL: {
-            Expr *r = integ_by_parts(e, var);
+            Expr *r = integ_exp_trig(e, var);
+            if (r) return r;
+            r = integ_tabular(e, var);
+            if (r) return r;
+            r = integ_by_parts(e, var);
             if (r) return r;
             break;
         }
 
-        /*---- Rational functions: arctan, 1/x ----*/
         case EC_DIV: {
-            /* Pattern: 1/x → ln|x| (var_str may be set when parsed via \int mode) */
             if (e->left && e->right &&
                 e->left->type == EC_NUM && fabs(e->left->num_val - 1.0) < 1e-14 &&
                 e->right->type == EC_VAR && e->right->var_name == var) {
                 return ec_unary(EC_LN, ec_unary(EC_ABS, ec_varc(var)));
             }
-            /* Pattern: 1/(x^2+1) → atan(x) */
             Expr *r = try_rational_antideriv(e, var);
             if (r) return ec_simplify(r);
-            /* Don't fall through to broken formula: give up */
             return NULL;
         }
 
-        /*---- More hyperbolic ----*/
         case EC_COTH:
             if (expr_var_matches(e->arg, var)) {
                 return ec_unary(EC_LN, ec_unary(EC_SINH, ec_varc(var)));
@@ -422,7 +619,6 @@ static Expr* integ_rec(const Expr *e, char var) {
             }
             break;
 
-        /*---- Inverse hyperbolic ----*/
         case EC_ACOTH:
             if (expr_is_simple_var(e->arg, var)) {
                 Expr *x_acoth = ec_binary(EC_MUL, ec_varc(var), ec_unary(EC_ACOTH, ec_varc(var)));
@@ -461,14 +657,30 @@ static Expr* integ_rec(const Expr *e, char var) {
  * Public API
  *============================================================*/
 Expr* ec_integrate(Expr *e, char var) {
+    integ_tabular_hit_limit = 0;
     Expr *r = integ_rec(e, var);
-    return r ? ec_simplify(r) : NULL;
+    if (r) {
+        if (r->type == EC_INT) {
+            ec_free_expr(r);
+            r = NULL;
+        } else {
+            return ec_simplify(r);
+        }
+    }
+
+    if (e) {
+        char vbuf[2] = {var, 0};
+        Expr *series = ec_series_integral(ec_copy(e), vbuf, 10);
+        if (series && series->type != EC_INT) return ec_simplify(series);
+        ec_free_expr(series);
+    }
+
+    return NULL;
 }
 
 Expr* ec_definite_integral(Expr *e, char var, Expr *a, Expr *b) {
     Expr *F = integ_rec(e, var);
     if (!F) return ec_defintg(ec_copy(e), var, a, b);
-    /* Evaluate F at upper and lower bounds */
     ECValue va = ec_eval(a, NULL);
     ECValue vb = ec_eval(b, NULL);
     double av = ec_value_as_real(&va);
